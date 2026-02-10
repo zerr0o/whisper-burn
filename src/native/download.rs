@@ -7,6 +7,7 @@ use std::sync::Arc;
 /// Model variant selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelVariant {
+    Medium,
     LargeV3,
     LargeV3Turbo,
 }
@@ -14,6 +15,7 @@ pub enum ModelVariant {
 impl ModelVariant {
     pub fn display_name(&self) -> &'static str {
         match self {
+            Self::Medium => "Whisper Medium",
             Self::LargeV3 => "Whisper Large V3",
             Self::LargeV3Turbo => "Whisper Large V3 Turbo",
         }
@@ -21,6 +23,7 @@ impl ModelVariant {
 
     pub fn gguf_filename(&self) -> &'static str {
         match self {
+            Self::Medium => "whisper-medium-q4.gguf",
             Self::LargeV3 => "whisper-large-v3-q4.gguf",
             Self::LargeV3Turbo => "whisper-large-v3-turbo-q4.gguf",
         }
@@ -28,6 +31,7 @@ impl ModelVariant {
 
     pub fn gguf_size_hint(&self) -> &'static str {
         match self {
+            Self::Medium => "~604 MB",
             Self::LargeV3 => "~800 MB",
             Self::LargeV3Turbo => "~420 MB",
         }

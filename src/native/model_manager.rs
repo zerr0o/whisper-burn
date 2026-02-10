@@ -10,7 +10,7 @@ pub struct InstalledModel {
 
 pub fn list_installed_models() -> Vec<InstalledModel> {
     let mut models = Vec::new();
-    for variant in [ModelVariant::LargeV3, ModelVariant::LargeV3Turbo] {
+    for variant in [ModelVariant::Medium, ModelVariant::LargeV3, ModelVariant::LargeV3Turbo] {
         let path = download::gguf_path(variant);
         if path.exists() {
             let size_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);

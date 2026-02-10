@@ -15,7 +15,7 @@ pipeline_tag: automatic-speech-recognition
 
 # Whisper Burn GGUF — Q4_0 Quantized Models
 
-Q4_0 quantized GGUF versions of OpenAI's Whisper Large V3 and Large V3 Turbo, optimized for GPU inference with [whisper-burn](https://github.com/zerr0o/whisper-burn).
+Q4_0 quantized GGUF versions of OpenAI's Whisper models, optimized for GPU inference with [whisper-burn](https://github.com/zerr0o/whisper-burn).
 
 ## Files
 
@@ -23,7 +23,8 @@ Q4_0 quantized GGUF versions of OpenAI's Whisper Large V3 and Large V3 Turbo, op
 |------|-------|------|------------|
 | `whisper-large-v3-q4.gguf` | Whisper Large V3 | ~1.0 GB | 1550M (32 encoder + 32 decoder layers) |
 | `whisper-large-v3-turbo-q4.gguf` | Whisper Large V3 Turbo | ~712 MB | 809M (32 encoder + 4 decoder layers) |
-| `tokenizer.json` | BPE tokenizer | ~2.1 MB | Shared by both models |
+| `whisper-medium-q4.gguf` | Whisper Medium | ~604 MB | 769M (24 encoder + 24 decoder layers) |
+| `tokenizer.json` | BPE tokenizer | ~2.1 MB | Shared by all models |
 
 ## Quantization Details
 
@@ -32,18 +33,29 @@ Q4_0 quantized GGUF versions of OpenAI's Whisper Large V3 and Large V3 Turbo, op
 - **What stays F32:** Token embeddings, positional embeddings, biases, layer norms, and small matrices
 - **Conversion script:** `scripts/convert_whisper.py` from the whisper-burn repository
 
+## Model Comparison
+
+| Model | Mel bins | Hidden dim | Encoder layers | Decoder layers | Accuracy | Speed |
+|-------|----------|-----------|----------------|----------------|----------|-------|
+| Large V3 | 128 | 1280 | 32 | 32 | Best | Slower |
+| Large V3 Turbo | 128 | 1280 | 32 | 4 | Very good | Fast |
+| Medium | 80 | 1024 | 24 | 24 | Good | Fastest |
+
 ## Usage with whisper-burn
 
 These models are automatically downloaded by the whisper-burn desktop application. You can also download them manually:
 
 ```bash
-# Download Large V3 Turbo (recommended — faster, smaller)
+# Download Large V3 Turbo (recommended — fast & accurate)
 wget https://huggingface.co/zerr0o/whisper-burn-gguf/resolve/main/whisper-large-v3-turbo-q4.gguf
 
-# Download Large V3 (higher accuracy)
+# Download Large V3 (highest accuracy)
 wget https://huggingface.co/zerr0o/whisper-burn-gguf/resolve/main/whisper-large-v3-q4.gguf
 
-# Download tokenizer (required for both)
+# Download Medium (fastest, lower VRAM)
+wget https://huggingface.co/zerr0o/whisper-burn-gguf/resolve/main/whisper-medium-q4.gguf
+
+# Download tokenizer (required for all models)
 wget https://huggingface.co/zerr0o/whisper-burn-gguf/resolve/main/tokenizer.json
 ```
 
@@ -63,8 +75,8 @@ Key features:
 ### Inference Pipeline
 
 ```
-Audio → Resample 16kHz → Mel spectrogram [1,128,3000]
-     → Encoder [1,1500,1280] → Greedy decoder with KV cache
+Audio → Resample 16kHz → Mel spectrogram [1, n_mels, 3000]
+     → Encoder → Greedy decoder with KV cache
      → Token IDs → Text
 ```
 
@@ -72,6 +84,7 @@ Audio → Resample 16kHz → Mel spectrogram [1,128,3000]
 
 - [openai/whisper-large-v3](https://huggingface.co/openai/whisper-large-v3)
 - [openai/whisper-large-v3-turbo](https://huggingface.co/openai/whisper-large-v3-turbo)
+- [openai/whisper-medium](https://huggingface.co/openai/whisper-medium)
 
 ## License
 

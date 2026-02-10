@@ -50,6 +50,22 @@ impl WhisperConfig {
         }
     }
 
+    /// Whisper Medium configuration (769M parameters).
+    pub fn medium() -> Self {
+        Self {
+            n_mels: 80,
+            n_audio_ctx: 1500,
+            n_audio_state: 1024,
+            n_audio_head: 16,
+            n_audio_layer: 24,
+            n_text_ctx: 448,
+            n_text_state: 1024,
+            n_text_head: 16,
+            n_text_layer: 24,
+            n_vocab: 51865,
+        }
+    }
+
     /// Head dimension (state / heads).
     pub fn head_dim(&self) -> usize {
         self.n_audio_state / self.n_audio_head

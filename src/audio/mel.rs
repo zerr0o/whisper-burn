@@ -41,14 +41,19 @@ impl Default for MelConfig {
 }
 
 impl MelConfig {
-    /// Whisper-optimized configuration (identical to Voxtral).
+    /// Whisper-optimized configuration for Large V3 models (128 mel bins).
     pub fn whisper() -> Self {
+        Self::whisper_with_mels(128)
+    }
+
+    /// Whisper configuration with a custom number of mel bins.
+    pub fn whisper_with_mels(n_mels: usize) -> Self {
         Self {
             sample_rate: 16000,
             n_fft: 400,
             hop_length: 160,
             win_length: Some(400),
-            n_mels: 128,
+            n_mels,
             fmin: 0.0,
             fmax: None,
         }

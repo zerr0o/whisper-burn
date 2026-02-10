@@ -27,6 +27,7 @@ pub struct InferenceState {
     pub model: WhisperModel,
     pub tokenizer: WhisperTokenizer,
     pub device: <Backend as burn::tensor::backend::Backend>::Device,
+    pub n_mels: usize,
 }
 
 /// Transcribe an AudioBuffer, returning (text, inference_ms).
@@ -51,7 +52,7 @@ pub fn transcribe(state: &InferenceState, audio: AudioBuffer, language: Language
     }
 
     // Compute mel spectrogram
-    let mel_extractor = MelSpectrogram::new(MelConfig::whisper());
+    let mel_extractor = MelSpectrogram::new(MelConfig::whisper_with_mels(state.n_mels));
     let mel = mel_extractor.compute_log(&samples);
     let n_frames = mel.len();
     let n_mels = if n_frames > 0 { mel[0].len() } else { 0 };
