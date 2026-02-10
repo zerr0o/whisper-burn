@@ -8,7 +8,7 @@ license = "MIT"
 [features]
 default = ["wgpu", "native"]
 wgpu = ["burn/wgpu"]
-native = ["eframe", "cpal", "ureq", "wgpu"]
+native = ["eframe", "cpal", "ureq", "wgpu", "global-hotkey", "tray-icon", "arboard", "enigo", "dirs", "image", "windows"]
 
 [dependencies]
 # Burn ML framework
@@ -41,6 +41,21 @@ half = "2.7"
 eframe = { version = "0.31", optional = true, default-features = false, features = ["default_fonts", "glow"] }
 cpal = { version = "0.15", optional = true }
 ureq = { version = "2.12", optional = true }
+global-hotkey = { version = "0.7", optional = true }
+tray-icon = { version = "0.19", optional = true }
+arboard = { version = "3.4", optional = true }
+enigo = { version = "0.2", optional = true }
+dirs = { version = "6.0", optional = true }
+image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", optional = true, features = [
+    "Win32_Foundation",
+    "Win32_Media_Audio",
+    "Win32_Media_Audio_Endpoints",
+    "Win32_System_Com",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [[bin]]
 name = "whisper-native"

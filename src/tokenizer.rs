@@ -36,27 +36,11 @@ impl WhisperTokenizer {
 
     /// Language token for a given language code.
     pub fn lang_token(lang: &str) -> u32 {
-        match lang {
-            "en" => 50259,
-            "zh" => 50260,
-            "de" => 50261,
-            "es" => 50262,
-            "ru" => 50263,
-            "ko" => 50264,
-            "fr" => 50265,
-            "ja" => 50266,
-            "pt" => 50267,
-            "tr" => 50268,
-            "pl" => 50269,
-            "ca" => 50270,
-            "nl" => 50271,
-            "ar" => 50272,
-            "sv" => 50273,
-            "it" => 50274,
-            "id" => 50275,
-            "hi" => 50276,
-            _ => 50259, // default to English
-        }
+        crate::ALL_LANGUAGES
+            .iter()
+            .find(|l| l.code == Some(lang))
+            .map(|l| l.token_id)
+            .unwrap_or(50259) // default to English
     }
 
     /// Transcribe task token.
