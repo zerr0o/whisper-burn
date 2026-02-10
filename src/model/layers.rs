@@ -70,53 +70,64 @@ impl Conv1D {
         Self { weight, bias }
     }
 
-    /// Forward pass for Conv1D.
+    /// Forward pass for Conv1D using im2col for efficient GPU execution.
     ///
     /// Input shape: [B, C_in, T]
     /// Output shape: [B, C_out, T_out]
-    ///
-    /// Uses stride=1, padding=1 by default (matching Whisper conv1).
-    /// For conv2 (stride=2), use `forward_strided`.
     pub fn forward(&self, x: Tensor<B, 3>, padding: usize, stride: usize) -> Tensor<B, 3> {
-        // Manual conv1d implementation using unfold-like approach
         let [batch, _in_ch, t_in] = x.dims();
         let [out_ch, in_ch, kernel_size] = self.weight.dims();
-
         let t_out = (t_in + 2 * padding - kernel_size) / stride + 1;
 
         // Pad input if needed
         let x = if padding > 0 {
-            // Zero-pad on both sides along time dimension
             let device = x.device();
-            let zeros_left: Tensor<B, 3> =
-                Tensor::zeros([batch, in_ch, padding], &device);
-            let zeros_right: Tensor<B, 3> =
-                Tensor::zeros([batch, in_ch, padding], &device);
-            Tensor::cat(vec![zeros_left, x, zeros_right], 2)
+            let zl: Tensor<B, 3> = Tensor::zeros([batch, in_ch, padding], &device);
+            let zr: Tensor<B, 3> = Tensor::zeros([batch, in_ch, padding], &device);
+            Tensor::cat(vec![zl, x, zr], 2)
         } else {
             x
         };
 
-        // Reshape weight to [out_ch, in_ch * kernel_size]
-        let w_flat: Tensor<B, 2> = self.weight.clone().reshape([out_ch, in_ch * kernel_size]);
-
-        // Extract patches and compute convolution via matmul
-        let mut columns = Vec::with_capacity(t_out);
-        for t in 0..t_out {
-            let start = t * stride;
-            // x[:, :, start..start+kernel_size] -> [B, in_ch, kernel_size]
-            let patch = x.clone().slice([0..batch, 0..in_ch, start..start + kernel_size]);
-            // Reshape to [B, in_ch * kernel_size]
-            let patch_flat: Tensor<B, 2> = patch.reshape([batch, in_ch * kernel_size]);
-            // Matmul: [B, in_ch*k] x [in_ch*k, out_ch] = [B, out_ch]
-            let out = patch_flat.matmul(w_flat.clone().transpose());
-            // Add bias
-            let out = out + self.bias.clone().unsqueeze::<2>();
-            // [B, out_ch] -> [B, out_ch, 1]
-            columns.push(out.unsqueeze_dim(2));
+        // im2col: build [batch, kernel_size * in_ch, t_out] with one slice per kernel position
+        let mut cols = Vec::with_capacity(kernel_size);
+        for k in 0..kernel_size {
+            if stride == 1 {
+                // Simple contiguous slice: [batch, in_ch, t_out]
+                let col = x.clone().slice([0..batch, 0..in_ch, k..k + t_out]);
+                cols.push(col);
+            } else {
+                // Take every stride-th element via reshape trick
+                let needed = t_out * stride;
+                let shifted = x.clone().slice([0..batch, 0..in_ch, k..k + needed]);
+                // [batch, in_ch, t_out * stride] -> [batch, in_ch, t_out, stride]
+                // -> select [:,:,:,0] -> [batch, in_ch, t_out]
+                let strided: Tensor<B, 3> = shifted
+                    .reshape([batch, in_ch, t_out, stride])
+                    .slice([0..batch, 0..in_ch, 0..t_out, 0..1])
+                    .reshape([batch, in_ch, t_out]);
+                cols.push(strided);
+            }
         }
 
-        // Concatenate along time dimension: [B, out_ch, t_out]
-        Tensor::cat(columns, 2)
+        // Cat along channel dim: [batch, kernel_size * in_ch, t_out]
+        let col = Tensor::cat(cols, 1);
+        // Transpose to [batch, t_out, kernel_size * in_ch]
+        let col = col.swap_dims(1, 2);
+
+        // Reorder weight [out_ch, in_ch, kernel_size] -> [out_ch, kernel_size, in_ch]
+        // to match im2col memory layout (kernel-major grouping)
+        let w: Tensor<B, 3> = self.weight.clone().swap_dims(1, 2);
+        let w_flat: Tensor<B, 2> = w.reshape([out_ch, kernel_size * in_ch]);
+
+        // Single large matmul: [batch, t_out, K*C_in] x [1, K*C_in, C_out] -> [batch, t_out, C_out]
+        let w_3d: Tensor<B, 3> = w_flat.transpose().unsqueeze_dim(0);
+        let out = col.matmul(w_3d);
+
+        // Add bias: [C_out] broadcast to [batch, t_out, C_out]
+        let out = out + self.bias.clone().unsqueeze::<3>();
+
+        // Transpose to [batch, C_out, t_out]
+        out.swap_dims(1, 2)
     }
 }

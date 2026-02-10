@@ -89,7 +89,10 @@ impl WhisperModel {
             position += 1;
         }
 
-        // First generated token comes from the last prompt step's logits
+        // Suppress EOT at the first position (matches Whisper's SuppressBlank filter)
+        // to prevent premature termination from Q4 quantization noise
+        const MIN_TOKENS: usize = 3;
+        logits[EOT as usize] = f32::NEG_INFINITY;
         let mut next_token = argmax(&logits) as i32;
 
         // Autoregressive generation
@@ -109,6 +112,12 @@ impl WhisperModel {
 
             logits = self.decoder.decode_step(next_token, position, &encoder_out, &mut cache);
             position += 1;
+
+            // Suppress EOT for the first few tokens
+            if step + 1 < MIN_TOKENS {
+                logits[EOT as usize] = f32::NEG_INFINITY;
+            }
+
             next_token = argmax(&logits) as i32;
         }
 
