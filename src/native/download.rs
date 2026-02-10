@@ -34,16 +34,15 @@ impl ModelVariant {
     }
 
     pub fn gguf_url(&self) -> String {
-        // Placeholder URL - replace with actual HuggingFace repo once models are uploaded
         format!(
-            "https://huggingface.co/whisper-burn/whisper-gguf/resolve/main/{}",
+            "https://huggingface.co/zerr0o/whisper-burn-gguf/resolve/main/{}",
             self.gguf_filename()
         )
     }
 }
 
 const TOKENIZER_URL: &str =
-    "https://huggingface.co/openai/whisper-large-v3/resolve/main/tokenizer.json";
+    "https://huggingface.co/zerr0o/whisper-burn-gguf/resolve/main/tokenizer.json";
 
 pub struct DownloadProgress {
     pub gguf_bytes: Arc<AtomicU64>,
