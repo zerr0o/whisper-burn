@@ -58,6 +58,32 @@ impl Q4MultiHeadAttention {
         self.out.forward(out)
     }
 
+    /// Forward pass with causal mask, returning K/V for cache initialization.
+    pub fn forward_init_cache(
+        &self,
+        x: Tensor<B, 3>,
+    ) -> (Tensor<B, 3>, Tensor<B, 3>, Tensor<B, 3>) {
+        let [batch, seq_len, _] = x.dims();
+
+        let q = self.query.forward(x.clone());
+        let k = self.key.forward(x.clone());
+        let v = self.value.forward(x);
+
+        let out = scaled_dot_product_attention(
+            q,
+            k.clone(),
+            v.clone(),
+            self.n_heads,
+            self.head_dim,
+            batch,
+            seq_len,
+            seq_len,
+            true,
+        );
+
+        (self.out.forward(out), k, v)
+    }
+
     /// Forward pass for decoder self-attention with KV cache.
     ///
     /// `x` shape: [B, 1, D] (single new token)
@@ -145,6 +171,34 @@ impl Q4CrossAttention {
         );
 
         self.out.forward(out)
+    }
+
+    /// Forward pass for cross-attention, returning K/V for cache initialization.
+    pub fn forward_init_cache(
+        &self,
+        x: Tensor<B, 3>,
+        encoder_out: &Tensor<B, 3>,
+    ) -> (Tensor<B, 3>, Tensor<B, 3>, Tensor<B, 3>) {
+        let [batch, q_len, _] = x.dims();
+
+        let q = self.query.forward(x);
+        let k = self.key.forward(encoder_out.clone());
+        let v = self.value.forward(encoder_out.clone());
+        let kv_len = k.dims()[1];
+
+        let out = scaled_dot_product_attention(
+            q,
+            k.clone(),
+            v.clone(),
+            self.n_heads,
+            self.head_dim,
+            batch,
+            q_len,
+            kv_len,
+            false,
+        );
+
+        (self.out.forward(out), k, v)
     }
 
     /// Forward pass with cached encoder keys/values.

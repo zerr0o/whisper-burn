@@ -134,6 +134,37 @@ impl DecoderBlock {
         let x = self.mlp.forward(x);
         residual + x
     }
+
+    /// Forward processing multiple tokens, initializing the KV cache.
+    /// Used for the initial prompt to avoid sequential decode_step calls.
+    pub fn forward_init_cache(
+        &self,
+        x: Tensor<B, 3>,
+        encoder_out: &Tensor<B, 3>,
+        cache: &mut BlockKVCache,
+    ) -> Tensor<B, 3> {
+        // Self-attention (causal) + save K/V to cache
+        let residual = x.clone();
+        let x = self.attn_ln.forward(x);
+        let (x, self_k, self_v) = self.attn.forward_init_cache(x);
+        cache.self_k = Some(self_k);
+        cache.self_v = Some(self_v);
+        let x = residual + x;
+
+        // Cross-attention + save encoder K/V to cache
+        let residual = x.clone();
+        let x = self.cross_attn_ln.forward(x);
+        let (x, cross_k, cross_v) = self.cross_attn.forward_init_cache(x, encoder_out);
+        cache.cross_k = Some(cross_k);
+        cache.cross_v = Some(cross_v);
+        let x = residual + x;
+
+        // FFN
+        let residual = x.clone();
+        let x = self.mlp_ln.forward(x);
+        let x = self.mlp.forward(x);
+        residual + x
+    }
 }
 
 /// Whisper text decoder.
@@ -211,6 +242,57 @@ impl WhisperDecoder {
         let logits = x_2d.matmul(self.token_embedding.clone().transpose());
 
         logits
+    }
+
+    /// Process the initial prompt in a single batched forward pass
+    /// and initialize the KV cache for subsequent autoregressive decoding.
+    ///
+    /// Returns logits for the last prompt position as Vec<f32>.
+    pub fn forward_prompt(
+        &self,
+        token_ids: &[i32],
+        encoder_out: &Tensor<B, 3>,
+        cache: &mut KVCache,
+    ) -> Vec<f32> {
+        let d_model = self.token_embedding.dims()[1];
+        let seq_len = token_ids.len();
+
+        // Token embeddings
+        let mut embed_rows = Vec::with_capacity(seq_len);
+        for &tid in token_ids {
+            let row = self
+                .token_embedding
+                .clone()
+                .slice([tid as usize..tid as usize + 1, 0..d_model]);
+            embed_rows.push(row);
+        }
+        let token_embed: Tensor<B, 2> = Tensor::cat(embed_rows, 0);
+
+        // Positional embeddings
+        let pos_embed = self
+            .positional_embedding
+            .clone()
+            .slice([0..seq_len, 0..d_model]);
+
+        let x: Tensor<B, 3> = (token_embed + pos_embed).unsqueeze_dim(0);
+
+        // Through decoder blocks, initializing cache
+        let mut x = x;
+        for (i, block) in self.blocks.iter().enumerate() {
+            x = block.forward_init_cache(x, encoder_out, &mut cache.blocks[i]);
+        }
+
+        // Final layer norm
+        let x = self.ln.forward(x);
+
+        // Project last position to vocab
+        let last_pos: Tensor<B, 2> =
+            x.slice([0..1, seq_len - 1..seq_len, 0..d_model])
+                .reshape([1, d_model]);
+        let logits = last_pos.matmul(self.token_embedding.clone().transpose());
+
+        let logits_data = logits.into_data();
+        logits_data.to_vec::<f32>().unwrap()
     }
 
     /// Decode a single token step with KV cache.

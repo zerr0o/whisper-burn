@@ -25,17 +25,17 @@ impl LayerNorm {
         // x shape: [B, T, C]
         let mean = x.clone().mean_dim(2);
         let centered = x - mean;
-        let var = centered.clone().powf_scalar(2.0).mean_dim(2);
+        let var = (centered.clone() * centered.clone()).mean_dim(2);
         let normed = centered / (var + eps).sqrt();
         normed * self.weight.clone().unsqueeze::<3>() + self.bias.clone().unsqueeze::<3>()
     }
 }
 
-/// GELU activation function (approximate).
+/// GELU activation function (approximate, using multiplication instead of powf).
 pub fn gelu(x: Tensor<B, 3>) -> Tensor<B, 3> {
     // GELU(x) = 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
     let sqrt_2_over_pi = (2.0f32 / PI).sqrt();
-    let x3 = x.clone().powf_scalar(3.0);
+    let x3 = x.clone() * x.clone() * x.clone();
     let inner = (x.clone() + x3 * 0.044715) * sqrt_2_over_pi;
     x * 0.5 * (inner.tanh() + 1.0)
 }

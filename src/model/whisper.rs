@@ -82,12 +82,10 @@ impl WhisperModel {
             vec![lang_token, TRANSCRIBE, NO_TIMESTAMPS]
         };
 
-        // Feed prompt tokens, keep logits from last step
-        logits = Vec::new();
-        for &token in &prompt {
-            logits = self.decoder.decode_step(token, position, &encoder_out, &mut cache);
-            position += 1;
-        }
+        // Process all prompt tokens in a single batched forward pass
+        // (much faster than sequential decode_step calls)
+        logits = self.decoder.forward_prompt(&prompt, &encoder_out, &mut cache);
+        position += prompt.len();
 
         // Suppress EOT at the first position (matches Whisper's SuppressBlank filter)
         // to prevent premature termination from Q4 quantization noise
