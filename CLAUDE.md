@@ -52,7 +52,18 @@ Audio → Resample 16kHz → Pad/truncate 30s → Mel spectrogram [1,128,3000] �
 
 ## Testing
 
-No automated test suite. Validation is done by running the native app with real audio input.
+```bash
+# Run all tests (13 unit tests)
+cargo test
+
+# Run GGUF module tests only
+cargo test gguf::tests
+
+# Run a single test
+cargo test test_q4_matmul_small
+```
+
+Tests cover: Q4_0 block dequantization (CPU), GGUF v3 parsing, GPU dequantization, Q4 matmul kernel (various shapes including Whisper encoder 1280x1280), Q4Linear with/without bias, Q4FFN forward shape, batched matmul, and quantize-upload-dequantize roundtrip.
 
 ## Feature Flags
 

@@ -9,6 +9,9 @@ pub mod op;
 pub mod reader;
 pub mod tensor;
 
+#[cfg(test)]
+mod tests;
+
 pub use linear::Q4Linear;
 pub use op::q4_matmul;
 pub use reader::{GgmlDtype, GgufReader, GgufTensorInfo};
