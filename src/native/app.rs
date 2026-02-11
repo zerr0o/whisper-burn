@@ -62,8 +62,7 @@ impl NativeApp {
 
         let selected_variant = match config.model_variant.as_str() {
             "medium" => ModelVariant::Medium,
-            "large-v3" => ModelVariant::LargeV3,
-            _ => ModelVariant::LargeV3Turbo,
+            _ => ModelVariant::LargeV3,
         };
 
         let tray_state = TrayState::new();
@@ -101,7 +100,6 @@ impl NativeApp {
         self.config.model_variant = match variant {
             ModelVariant::Medium => "medium".into(),
             ModelVariant::LargeV3 => "large-v3".into(),
-            ModelVariant::LargeV3Turbo => "large-v3-turbo".into(),
         };
         self.save_config();
         self.screen = AppScreen::LoadingModel(variant);
@@ -111,7 +109,6 @@ impl NativeApp {
         let config = match variant {
             ModelVariant::Medium => WhisperConfig::medium(),
             ModelVariant::LargeV3 => WhisperConfig::large_v3(),
-            ModelVariant::LargeV3Turbo => WhisperConfig::large_v3_turbo(),
         };
 
         let (tx, rx) = std::sync::mpsc::channel::<Result<InferenceState, String>>();
@@ -343,8 +340,6 @@ impl eframe::App for NativeApp {
             AppScreen::CheckModel => {
                 if download::models_present(self.selected_variant) {
                     self.start_model_load(self.selected_variant);
-                } else if download::models_present(ModelVariant::LargeV3Turbo) {
-                    self.start_model_load(ModelVariant::LargeV3Turbo);
                 } else if download::models_present(ModelVariant::LargeV3) {
                     self.start_model_load(ModelVariant::LargeV3);
                 } else if download::models_present(ModelVariant::Medium) {

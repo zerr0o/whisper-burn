@@ -29,29 +29,13 @@ pub fn draw_choose_model(ui: &mut egui::Ui) -> ChooseAction {
             ui.set_min_width(400.0);
             ui.vertical(|ui| {
                 if ui
-                    .button(
-                        egui::RichText::new("Whisper Large V3 Turbo (Recommended)")
-                            .size(16.0),
-                    )
-                    .clicked()
-                {
-                    action = ChooseAction::Select(ModelVariant::LargeV3Turbo);
-                }
-                ui.label(
-                    egui::RichText::new("  809M params | ~712 MB | Fast & accurate")
-                        .size(12.0)
-                        .color(egui::Color32::from_gray(140)),
-                );
-                ui.add_space(12.0);
-
-                if ui
-                    .button(egui::RichText::new("Whisper Large V3 (Max Quality)").size(16.0))
+                    .button(egui::RichText::new("Whisper Large V3 (Recommended)").size(16.0))
                     .clicked()
                 {
                     action = ChooseAction::Select(ModelVariant::LargeV3);
                 }
                 ui.label(
-                    egui::RichText::new("  1.55B params | ~1.0 GB | Best accuracy")
+                    egui::RichText::new("  1.55B params | ~800 MB | Best accuracy")
                         .size(12.0)
                         .color(egui::Color32::from_gray(140)),
                 );

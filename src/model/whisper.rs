@@ -10,11 +10,11 @@ use super::encoder::WhisperEncoder;
 
 type B = Wgpu;
 
-// Special token IDs for Whisper
+// Special token IDs (shared across all Whisper models)
 const SOT: i32 = 50258; // Start of transcript
 const EOT: i32 = 50257; // End of transcript
-const TRANSCRIBE: i32 = 50359; // Transcribe task token
-const NO_TIMESTAMPS: i32 = 50363; // No timestamps token
+// TRANSCRIBE and NO_TIMESTAMPS vary by model (99 vs 100 languages).
+// Use self.config.transcribe_token() and self.config.no_timestamps_token().
 
 /// Maximum number of generated tokens before stopping.
 const MAX_TOKENS: usize = 224;
@@ -58,18 +58,23 @@ impl WhisperModel {
         let mut position = 0;
         let mut logits;
 
+        // Token IDs that vary by model (99 vs 100 language tokens)
+        let transcribe_token = self.config.transcribe_token();
+        let no_timestamps_token = self.config.no_timestamps_token();
+        let lang_range = self.config.lang_token_range();
+
         // Build prompt based on language selection
         let prompt = if let Some(lang) = lang_code {
             // Explicit language: [SOT, lang, TRANSCRIBE, NO_TIMESTAMPS]
             let lang_token = crate::tokenizer::WhisperTokenizer::lang_token(lang);
-            vec![SOT, lang_token as i32, TRANSCRIBE, NO_TIMESTAMPS]
+            vec![SOT, lang_token as i32, transcribe_token, no_timestamps_token]
         } else {
             // Auto-detect: feed [SOT], pick language from logits, then continue
             logits = self.decoder.decode_step(SOT, 0, &encoder_out, &mut cache);
             position = 1;
 
-            // Restrict to language tokens (50259..50358) and pick the best
-            let lang_token = (50259..50358)
+            // Restrict to language tokens and pick the best
+            let lang_token = lang_range
                 .max_by(|&a, &b| {
                     logits[a]
                         .partial_cmp(&logits[b])
@@ -79,7 +84,7 @@ impl WhisperModel {
 
             info!("Auto-detected language token: {}", lang_token);
 
-            vec![lang_token, TRANSCRIBE, NO_TIMESTAMPS]
+            vec![lang_token, transcribe_token, no_timestamps_token]
         };
 
         // Process all prompt tokens in a single batched forward pass

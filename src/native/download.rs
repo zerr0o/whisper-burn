@@ -9,7 +9,6 @@ use std::sync::Arc;
 pub enum ModelVariant {
     Medium,
     LargeV3,
-    LargeV3Turbo,
 }
 
 impl ModelVariant {
@@ -17,7 +16,6 @@ impl ModelVariant {
         match self {
             Self::Medium => "Whisper Medium",
             Self::LargeV3 => "Whisper Large V3",
-            Self::LargeV3Turbo => "Whisper Large V3 Turbo",
         }
     }
 
@@ -25,7 +23,6 @@ impl ModelVariant {
         match self {
             Self::Medium => "whisper-medium-q4.gguf",
             Self::LargeV3 => "whisper-large-v3-q4.gguf",
-            Self::LargeV3Turbo => "whisper-large-v3-turbo-q4.gguf",
         }
     }
 
@@ -33,7 +30,6 @@ impl ModelVariant {
         match self {
             Self::Medium => "~604 MB",
             Self::LargeV3 => "~800 MB",
-            Self::LargeV3Turbo => "~420 MB",
         }
     }
 

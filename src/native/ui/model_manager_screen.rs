@@ -25,7 +25,7 @@ pub fn draw(
         let installed = model_manager::list_installed_models();
         let installed_variants: Vec<ModelVariant> = installed.iter().map(|m| m.variant).collect();
 
-        for variant in [ModelVariant::LargeV3Turbo, ModelVariant::LargeV3, ModelVariant::Medium] {
+        for variant in [ModelVariant::LargeV3, ModelVariant::Medium] {
             ui.group(|ui| {
                 ui.set_min_width(450.0);
                 ui.horizontal(|ui| {

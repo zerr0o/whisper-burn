@@ -23,6 +23,8 @@ pub struct WhisperConfig {
     pub n_text_layer: usize,
     /// Vocabulary size (51865)
     pub n_vocab: usize,
+    /// Number of language tokens (99 for Medium, 100 for Large V3+)
+    pub n_lang: usize,
 }
 
 impl WhisperConfig {
@@ -39,14 +41,7 @@ impl WhisperConfig {
             n_text_head: 20,
             n_text_layer: 32,
             n_vocab: 51865,
-        }
-    }
-
-    /// Whisper Large V3 Turbo configuration (809M parameters, 4 decoder layers).
-    pub fn large_v3_turbo() -> Self {
-        Self {
-            n_text_layer: 4,
-            ..Self::large_v3()
+            n_lang: 100,
         }
     }
 
@@ -63,7 +58,25 @@ impl WhisperConfig {
             n_text_head: 16,
             n_text_layer: 24,
             n_vocab: 51865,
+            n_lang: 99,
         }
+    }
+
+    /// Transcribe task token ID (varies by model: 50359 for Medium, 50360 for Large V3).
+    pub fn transcribe_token(&self) -> i32 {
+        // Layout: SOT(50258), langs(50259..+n_lang), TRANSLATE, TRANSCRIBE
+        // TRANSCRIBE = 50259 + n_lang + 1
+        50260i32 + self.n_lang as i32
+    }
+
+    /// No-timestamps token ID (varies by model: 50363 for Medium, 50364 for Large V3).
+    pub fn no_timestamps_token(&self) -> i32 {
+        self.transcribe_token() + 4
+    }
+
+    /// Range of language token IDs for auto-detection.
+    pub fn lang_token_range(&self) -> std::ops::Range<usize> {
+        50259..(50259 + self.n_lang)
     }
 
     /// Head dimension (state / heads).
