@@ -198,9 +198,6 @@ pub fn draw_ready(
             if ui.checkbox(&mut config.auto_mute, "Auto-mute").changed() {
                 action = MainAction::ConfigChanged;
             }
-            if ui.checkbox(&mut config.start_minimized, "Minimize to tray").changed() {
-                action = MainAction::ConfigChanged;
-            }
         });
     });
 

@@ -1,10 +1,8 @@
 # Whisper Burn
 
-Native Rust implementation of OpenAI's Whisper speech recognition with GPU acceleration. Push-to-Talk desktop app for Windows with global hotkey, auto-paste, and system tray integration.
+Native Rust implementation of OpenAI's Whisper speech recognition with GPU acceleration. Push-to-Talk desktop app for Windows with global hotkey and auto-paste.
 
 Built with [Burn](https://burn.dev) ML framework and wgpu (Vulkan/Metal/DirectX). Models loaded from Q4_0 quantized GGUF files. Inference runs entirely on GPU through custom WGSL compute shaders.
-
-> **⚠️ Known issue:** The "Minimize to tray" feature does not work yet. If you close the window with this option enabled, the app becomes unresponsive and must be killed from the Task Manager. For now, keep the app window open.
 
 ## Features
 
@@ -14,7 +12,6 @@ Built with [Burn](https://burn.dev) ML framework and wgpu (Vulkan/Metal/DirectX)
 - **99+ languages** — All Whisper-supported languages + automatic language detection.
 - **Auto-paste** — Transcribed text is automatically pasted into the active application (Ctrl+V simulation with clipboard preservation).
 - **Auto-mute** — System audio is muted during recording to avoid feedback, restored afterwards.
-- **System tray** — Runs in the background. Show/hide window, start minimized.
 - **Model manager** — Download, switch, or delete models from the UI.
 - **Persistent config** — Language, hotkey, model, and all settings saved to `%APPDATA%/whisper-burn/config.json`.
 - **Dark theme** — Modern dark UI built with egui.
@@ -84,7 +81,6 @@ All settings are accessible directly on the main screen:
 - **Language** — Auto-detect or force a specific language
 - **Auto-paste** — Automatically paste transcription into the active app
 - **Auto-mute** — Mute system audio during recording
-- **Minimize to tray** — Hide to system tray when closing the window
 
 ## Architecture
 
@@ -163,7 +159,7 @@ Tests cover Q4_0 dequantization, GGUF v3 parsing, GPU dequant, Q4 matmul kernel 
 
 **Core:** burn, cubecl, rustfft, hound, rubato, tokenizers, half, byteorder
 
-**Native app:** eframe, egui, cpal, tray-icon, arboard, enigo, dirs, ureq, windows (Win32 API for hotkeys and audio mute)
+**Native app:** eframe, egui, cpal, arboard, enigo, dirs, ureq, windows (Win32 API for hotkeys and audio mute)
 
 ## License
 

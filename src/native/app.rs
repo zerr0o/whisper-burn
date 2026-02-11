@@ -1,6 +1,6 @@
 use eframe::egui;
 use std::sync::atomic::Ordering;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tracing::info;
 
 use crate::gguf::loader::load_whisper_from_gguf;
@@ -16,7 +16,6 @@ use super::hotkey::{HotkeyCapture, HotkeyEvent, HotkeyState};
 use super::inference::{
     InferenceHandle, InferenceRequest, InferenceResponse, spawn_inference_thread,
 };
-use super::tray::{TrayAction, TrayState};
 use super::ui::status_indicator::AppStatus;
 
 pub enum AppScreen {
@@ -47,9 +46,7 @@ pub struct NativeApp {
     config: AppConfig,
     hotkey_state: HotkeyState,
     hotkey_capture: HotkeyCapture,
-    tray_state: Option<TrayState>,
     status: AppStatus,
-    window_visible: bool,
     repaint_thread_started: bool,
     #[cfg(windows)]
     audio_muter: Option<super::audio_mute::SystemAudioMuter>,
@@ -65,8 +62,6 @@ impl NativeApp {
             _ => ModelVariant::LargeV3,
         };
 
-        let tray_state = TrayState::new();
-
         Self {
             screen: AppScreen::CheckModel,
             inference: None,
@@ -78,9 +73,7 @@ impl NativeApp {
             config,
             hotkey_state: HotkeyState::new(),
             hotkey_capture: HotkeyCapture::new(),
-            tray_state: Some(tray_state),
             status: AppStatus::Ready,
-            window_visible: true,
             repaint_thread_started: false,
             #[cfg(windows)]
             audio_muter: None,
@@ -214,29 +207,6 @@ impl NativeApp {
     }
 }
 
-// --- Win32 window hide/show (bypasses eframe to keep event loop alive) ---
-
-#[cfg(windows)]
-fn win32_show_window(visible: bool) {
-    use windows::Win32::UI::WindowsAndMessaging::{
-        FindWindowW, SetForegroundWindow, ShowWindow, SW_HIDE, SW_SHOW,
-    };
-
-    unsafe {
-        let title = windows::core::w!("Whisper Burn");
-        if let Ok(hwnd) = FindWindowW(None, title) {
-            if !hwnd.is_invalid() {
-                if visible {
-                    let _ = ShowWindow(hwnd, SW_SHOW);
-                    let _ = SetForegroundWindow(hwnd);
-                } else {
-                    let _ = ShowWindow(hwnd, SW_HIDE);
-                }
-            }
-        }
-    }
-}
-
 thread_local! {
     static LOAD_RX: std::cell::RefCell<Option<std::sync::mpsc::Receiver<Result<InferenceState, String>>>> =
         std::cell::RefCell::new(None);
@@ -244,30 +214,19 @@ thread_local! {
 
 impl eframe::App for NativeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Spawn a background ticker to keep the event loop alive when hidden.
-        // ctx.request_repaint() sends a UserEvent through winit's event loop proxy,
-        // which wakes up the loop even when the window is SW_HIDE'd.
+        // Ensure frequent repaints for hotkey polling
         if !self.repaint_thread_started {
             self.repaint_thread_started = true;
             let ctx_clone = ctx.clone();
             std::thread::spawn(move || {
                 loop {
-                    std::thread::sleep(Duration::from_millis(100));
+                    std::thread::sleep(std::time::Duration::from_millis(100));
                     ctx_clone.request_repaint();
                 }
             });
         }
 
-        // Intercept window close: hide via Win32 instead of quitting.
-        // We do NOT use ViewportCommand::Visible because it kills the event loop.
-        if ctx.input(|i| i.viewport().close_requested()) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.window_visible = false;
-            #[cfg(windows)]
-            win32_show_window(false);
-        }
-
-        // Poll push-to-talk hotkey (GetAsyncKeyState, works even when hidden)
+        // Poll push-to-talk hotkey (GetAsyncKeyState)
         match self.hotkey_state.poll(&self.config) {
             HotkeyEvent::Pressed => {
                 if matches!(self.screen, AppScreen::Ready) {
@@ -280,28 +239,6 @@ impl eframe::App for NativeApp {
                 }
             }
             HotkeyEvent::None => {}
-        }
-
-        // Poll tray events
-        if let Some(ref tray) = self.tray_state {
-            match tray.poll() {
-                TrayAction::ToggleWindow => {
-                    self.window_visible = !self.window_visible;
-                    #[cfg(windows)]
-                    win32_show_window(self.window_visible);
-                    #[cfg(not(windows))]
-                    {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(self.window_visible));
-                        if self.window_visible {
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-                        }
-                    }
-                }
-                TrayAction::Quit => {
-                    std::process::exit(0);
-                }
-                TrayAction::None => {}
-            }
         }
 
         // Poll inference responses
@@ -413,11 +350,6 @@ impl eframe::App for NativeApp {
             if !new_samples.is_empty() {
                 all_samples.extend_from_slice(&new_samples);
             }
-        }
-
-        // Skip rendering when window is hidden (saves GPU)
-        if !self.window_visible {
-            return;
         }
 
         // Render UI

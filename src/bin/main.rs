@@ -3,16 +3,9 @@
 fn main() -> eframe::Result {
     tracing_subscriber::fmt().with_target(false).init();
 
-    let config = whisper_burn::native::config::load_config();
-    let start_minimized = config.start_minimized;
-
-    let mut viewport = eframe::egui::ViewportBuilder::default()
+    let viewport = eframe::egui::ViewportBuilder::default()
         .with_inner_size([700.0, 550.0])
         .with_title("Whisper Burn");
-
-    if start_minimized {
-        viewport = viewport.with_visible(false);
-    }
 
     let options = eframe::NativeOptions {
         viewport,

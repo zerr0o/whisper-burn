@@ -23,18 +23,16 @@ pub struct AppConfig {
     pub hotkey: HotkeyConfig,
     pub auto_paste: bool,
     pub auto_mute: bool,
-    pub start_minimized: bool,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             language: "auto".into(),
-            model_variant: "large-v3-turbo".into(),
+            model_variant: "large-v3".into(),
             hotkey: HotkeyConfig::default(),
             auto_paste: false,
             auto_mute: false,
-            start_minimized: false,
         }
     }
 }
