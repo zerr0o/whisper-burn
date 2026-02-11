@@ -4,12 +4,14 @@ Native Rust implementation of OpenAI's Whisper speech recognition with GPU accel
 
 Built with [Burn](https://burn.dev) ML framework and wgpu (Vulkan/Metal/DirectX). Models loaded from Q4_0 quantized GGUF files. Inference runs entirely on GPU through custom WGSL compute shaders.
 
+> **⚠️ Known issue:** The "Minimize to tray" feature does not work yet. If you close the window with this option enabled, the app becomes unresponsive and must be killed from the Task Manager. For now, keep the app window open.
+
 ## Features
 
-- **Push-to-Talk** — Hold a global hotkey (F2 default) to record, release to transcribe. Works even when the app is not focused.
+- **Push-to-Talk** — Hold a global hotkey to record, release to transcribe. Works even when the app is not focused. Supports any key combo including modifier-only (e.g. Ctrl+Win).
 - **GPU-accelerated** — Custom WGSL compute shaders for fused Q4 dequantization + matrix multiplication. No intermediate buffers.
 - **Pure Rust** — No Python, no ONNX, no external ML runtime. Single binary.
-- **99 languages** — All Whisper-supported languages + automatic language detection.
+- **99+ languages** — All Whisper-supported languages + automatic language detection.
 - **Auto-paste** — Transcribed text is automatically pasted into the active application (Ctrl+V simulation with clipboard preservation).
 - **Auto-mute** — System audio is muted during recording to avoid feedback, restored afterwards.
 - **System tray** — Runs in the background. Show/hide window, start minimized.
@@ -21,9 +23,8 @@ Built with [Burn](https://burn.dev) ML framework and wgpu (Vulkan/Metal/DirectX)
 
 | Model | Parameters | GGUF Size | Speed | Accuracy |
 |-------|-----------|-----------|-------|----------|
-| Whisper Medium | 769M | ~604 MB | Fastest | Good |
-| Whisper Large V3 Turbo | 809M | ~712 MB | Fast | Very good |
-| Whisper Large V3 | 1.55B | ~1.0 GB | Slower | Best |
+| Whisper Medium | 769M | ~604 MB | Fast | Good |
+| Whisper Large V3 | 1.55B | ~800 MB | Slower | Best |
 
 Models are automatically downloaded on first launch. Pre-quantized GGUF files are hosted on [HuggingFace](https://huggingface.co/zerr0o/whisper-burn-gguf).
 
@@ -78,12 +79,12 @@ cargo build --release --no-default-features --features wgpu
 
 ### Settings
 
-Click the gear icon to configure:
-- **Hotkey** — Change the push-to-talk key (F1-F12, Space, or with Ctrl/Alt/Shift)
+All settings are accessible directly on the main screen:
+- **Hotkey** — Click "Change" and press your desired key combo. Supports any combination of Ctrl/Alt/Shift/Win + trigger key (F1-F12, Space, etc.), or modifier-only combos (e.g. Ctrl+Win).
 - **Language** — Auto-detect or force a specific language
 - **Auto-paste** — Automatically paste transcription into the active app
 - **Auto-mute** — Mute system audio during recording
-- **Start minimized** — Launch directly to system tray
+- **Minimize to tray** — Hide to system tray when closing the window
 
 ## Architecture
 
@@ -110,7 +111,7 @@ src/
 │   └── ui/          Screens, theme, settings, waveform visualization
 ├── transcribe.rs    Core inference pipeline
 ├── tokenizer.rs     BPE tokenizer wrapper
-└── lib.rs           Language definitions (99 languages)
+└── lib.rs           Language definitions
 ```
 
 ### Key Design Decisions
@@ -130,9 +131,6 @@ pip install torch safetensors transformers numpy
 
 # Medium
 python scripts/convert_whisper.py --model openai/whisper-medium --output models/whisper-medium-q4.gguf
-
-# Large V3 Turbo
-python scripts/convert_whisper.py --model openai/whisper-large-v3-turbo --output models/whisper-large-v3-turbo-q4.gguf
 
 # Large V3
 python scripts/convert_whisper.py --model openai/whisper-large-v3 --output models/whisper-large-v3-q4.gguf
@@ -165,7 +163,7 @@ Tests cover Q4_0 dequantization, GGUF v3 parsing, GPU dequant, Q4 matmul kernel 
 
 **Core:** burn, cubecl, rustfft, hound, rubato, tokenizers, half, byteorder
 
-**Native app:** eframe, egui, cpal, global-hotkey, tray-icon, arboard, enigo, dirs, ureq, windows (Win32 API)
+**Native app:** eframe, egui, cpal, tray-icon, arboard, enigo, dirs, ureq, windows (Win32 API for hotkeys and audio mute)
 
 ## License
 
