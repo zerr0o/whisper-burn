@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 fn main() -> eframe::Result {
     tracing_subscriber::fmt().with_target(false).init();
 
@@ -21,32 +23,8 @@ fn main() -> eframe::Result {
         "Whisper Burn",
         options,
         Box::new(|cc| {
-            // Apply dark theme
             whisper_burn::native::ui::theme::apply_dark_theme(&cc.egui_ctx);
-
-            // Extract HWND on Windows
-            let hwnd = extract_hwnd(cc);
-
-            Ok(Box::new(whisper_burn::native::app::NativeApp::new(hwnd)))
+            Ok(Box::new(whisper_burn::native::app::NativeApp::new()))
         }),
     )
-}
-
-fn extract_hwnd(_cc: &eframe::CreationContext<'_>) -> Option<isize> {
-    #[cfg(windows)]
-    {
-        unsafe {
-            let title = windows::core::w!("Whisper Burn");
-            if let Ok(hwnd) = windows::Win32::UI::WindowsAndMessaging::FindWindowW(None, title) {
-                if !hwnd.is_invalid() {
-                    return Some(hwnd.0 as isize);
-                }
-            }
-        }
-        None
-    }
-    #[cfg(not(windows))]
-    {
-        None
-    }
 }

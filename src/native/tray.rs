@@ -89,6 +89,7 @@ fn create_default_icon() -> Icon {
 }
 
 #[cfg(windows)]
+#[allow(dead_code)]
 pub fn set_window_visible(hwnd: isize, visible: bool) {
     use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOW, SW_HIDE, SetForegroundWindow};
     use windows::Win32::Foundation::HWND;

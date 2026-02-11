@@ -12,12 +12,11 @@ use crate::Language;
 use super::audio_capture::AudioCapture;
 use super::config::{self, AppConfig};
 use super::download::{self, DownloadProgress, ModelVariant};
-use super::hotkey::{HotkeyEvent, HotkeyState};
+use super::hotkey::{HotkeyCapture, HotkeyEvent, HotkeyState};
 use super::inference::{
     InferenceHandle, InferenceRequest, InferenceResponse, spawn_inference_thread,
 };
 use super::tray::{TrayAction, TrayState};
-use super::ui::settings_panel::SettingsState;
 use super::ui::status_indicator::AppStatus;
 
 pub enum AppScreen {
@@ -46,18 +45,18 @@ pub struct NativeApp {
     selected_variant: ModelVariant,
     selected_lang: Language,
     config: AppConfig,
-    hotkey_state: Option<HotkeyState>,
+    hotkey_state: HotkeyState,
+    hotkey_capture: HotkeyCapture,
     tray_state: Option<TrayState>,
-    settings_state: SettingsState,
     status: AppStatus,
-    hwnd: Option<isize>,
     window_visible: bool,
+    repaint_thread_started: bool,
     #[cfg(windows)]
     audio_muter: Option<super::audio_mute::SystemAudioMuter>,
 }
 
 impl NativeApp {
-    pub fn new(hwnd: Option<isize>) -> Self {
+    pub fn new() -> Self {
         let config = config::load_config();
         let selected_lang = *Language::from_code(&config.language);
 
@@ -67,7 +66,6 @@ impl NativeApp {
             _ => ModelVariant::LargeV3Turbo,
         };
 
-        let hotkey_state = HotkeyState::new(&config);
         let tray_state = TrayState::new();
 
         Self {
@@ -79,12 +77,12 @@ impl NativeApp {
             selected_variant,
             selected_lang,
             config,
-            hotkey_state: Some(hotkey_state),
+            hotkey_state: HotkeyState::new(),
+            hotkey_capture: HotkeyCapture::new(),
             tray_state: Some(tray_state),
-            settings_state: SettingsState::default(),
             status: AppStatus::Ready,
-            hwnd,
             window_visible: true,
+            repaint_thread_started: false,
             #[cfg(windows)]
             audio_muter: None,
         }
@@ -143,7 +141,6 @@ impl NativeApp {
     }
 
     fn start_recording(&mut self) {
-        // Auto-mute system audio if enabled
         #[cfg(windows)]
         if self.config.auto_mute {
             match super::audio_mute::SystemAudioMuter::new() {
@@ -171,7 +168,6 @@ impl NativeApp {
             }
             Err(e) => {
                 self.error_msg = Some(format!("Audio capture error: {e}"));
-                // Restore mute on failure
                 #[cfg(windows)]
                 {
                     if let Some(muter) = self.audio_muter.take() {
@@ -183,7 +179,6 @@ impl NativeApp {
     }
 
     fn stop_recording(&mut self) {
-        // Restore system audio
         #[cfg(windows)]
         {
             if let Some(muter) = self.audio_muter.take() {
@@ -220,21 +215,27 @@ impl NativeApp {
             }
         }
     }
+}
 
-    fn toggle_window_visibility(&mut self) {
-        #[cfg(windows)]
-        if let Some(hwnd) = self.hwnd {
-            self.window_visible = !self.window_visible;
-            super::tray::set_window_visible(hwnd, self.window_visible);
-        }
-    }
+// --- Win32 window hide/show (bypasses eframe to keep event loop alive) ---
 
-    #[allow(dead_code)]
-    fn hide_window(&mut self) {
-        #[cfg(windows)]
-        if let Some(hwnd) = self.hwnd {
-            self.window_visible = false;
-            super::tray::set_window_visible(hwnd, false);
+#[cfg(windows)]
+fn win32_show_window(visible: bool) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        FindWindowW, SetForegroundWindow, ShowWindow, SW_HIDE, SW_SHOW,
+    };
+
+    unsafe {
+        let title = windows::core::w!("Whisper Burn");
+        if let Ok(hwnd) = FindWindowW(None, title) {
+            if !hwnd.is_invalid() {
+                if visible {
+                    let _ = ShowWindow(hwnd, SW_SHOW);
+                    let _ = SetForegroundWindow(hwnd);
+                } else {
+                    let _ = ShowWindow(hwnd, SW_HIDE);
+                }
+            }
         }
     }
 }
@@ -246,31 +247,58 @@ thread_local! {
 
 impl eframe::App for NativeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Periodic repaint for global hotkey + tray polling
-        ctx.request_repaint_after(Duration::from_millis(100));
+        // Spawn a background ticker to keep the event loop alive when hidden.
+        // ctx.request_repaint() sends a UserEvent through winit's event loop proxy,
+        // which wakes up the loop even when the window is SW_HIDE'd.
+        if !self.repaint_thread_started {
+            self.repaint_thread_started = true;
+            let ctx_clone = ctx.clone();
+            std::thread::spawn(move || {
+                loop {
+                    std::thread::sleep(Duration::from_millis(100));
+                    ctx_clone.request_repaint();
+                }
+            });
+        }
 
-        // Poll global hotkey
-        if let Some(ref mut hotkey) = self.hotkey_state {
-            match hotkey.poll() {
-                HotkeyEvent::Pressed => {
-                    if matches!(self.screen, AppScreen::Ready) {
-                        self.start_recording();
-                    }
+        // Intercept window close: hide via Win32 instead of quitting.
+        // We do NOT use ViewportCommand::Visible because it kills the event loop.
+        if ctx.input(|i| i.viewport().close_requested()) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.window_visible = false;
+            #[cfg(windows)]
+            win32_show_window(false);
+        }
+
+        // Poll push-to-talk hotkey (GetAsyncKeyState, works even when hidden)
+        match self.hotkey_state.poll(&self.config) {
+            HotkeyEvent::Pressed => {
+                if matches!(self.screen, AppScreen::Ready) {
+                    self.start_recording();
                 }
-                HotkeyEvent::Released => {
-                    if matches!(self.screen, AppScreen::Recording { .. }) {
-                        self.stop_recording();
-                    }
-                }
-                HotkeyEvent::None => {}
             }
+            HotkeyEvent::Released => {
+                if matches!(self.screen, AppScreen::Recording { .. }) {
+                    self.stop_recording();
+                }
+            }
+            HotkeyEvent::None => {}
         }
 
         // Poll tray events
         if let Some(ref tray) = self.tray_state {
             match tray.poll() {
                 TrayAction::ToggleWindow => {
-                    self.toggle_window_visibility();
+                    self.window_visible = !self.window_visible;
+                    #[cfg(windows)]
+                    win32_show_window(self.window_visible);
+                    #[cfg(not(windows))]
+                    {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(self.window_visible));
+                        if self.window_visible {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                        }
+                    }
                 }
                 TrayAction::Quit => {
                     std::process::exit(0);
@@ -292,7 +320,6 @@ impl eframe::App for NativeApp {
                         self.status = AppStatus::Done;
                         self.screen = AppScreen::Ready;
 
-                        // Auto-paste if enabled
                         if self.config.auto_paste && !text.is_empty() {
                             let text_clone = text;
                             std::thread::spawn(move || {
@@ -393,24 +420,9 @@ impl eframe::App for NativeApp {
             }
         }
 
-        // Draw settings overlay
-        let settings_action = super::ui::settings_panel::draw(
-            ctx,
-            &mut self.config,
-            &mut self.settings_state,
-        );
-        match settings_action {
-            super::ui::settings_panel::SettingsAction::HotkeyChanged => {
-                if let Some(ref mut hotkey) = self.hotkey_state {
-                    hotkey.update_hotkey(&self.config);
-                }
-                self.save_config();
-            }
-            super::ui::settings_panel::SettingsAction::Close => {
-                self.sync_lang_from_config();
-                self.save_config();
-            }
-            super::ui::settings_panel::SettingsAction::None => {}
+        // Skip rendering when window is hidden (saves GPU)
+        if !self.window_visible {
+            return;
         }
 
         // Render UI
@@ -462,24 +474,22 @@ impl eframe::App for NativeApp {
                     super::ui::loading_screen::draw(ui, &msg);
                 }
                 AppScreen::Ready | AppScreen::Transcribing => {
-                    let hotkey_display = HotkeyState::display_string(&self.config);
                     let action = super::ui::main_screen::draw_ready(
                         ui,
                         &self.last_result,
                         self.last_inference_ms,
                         self.selected_variant,
-                        self.selected_lang,
-                        &hotkey_display,
+                        &mut self.config,
                         self.status,
+                        &mut self.hotkey_capture,
                     );
                     match action {
-                        super::ui::main_screen::MainAction::LanguageChanged(lang) => {
-                            self.selected_lang = lang;
-                            self.config.language = lang.code.unwrap_or("auto").to_string();
+                        super::ui::main_screen::MainAction::HotkeyChanged => {
                             self.save_config();
                         }
-                        super::ui::main_screen::MainAction::OpenSettings => {
-                            self.settings_state.open = true;
+                        super::ui::main_screen::MainAction::ConfigChanged => {
+                            self.sync_lang_from_config();
+                            self.save_config();
                         }
                         super::ui::main_screen::MainAction::OpenModelManager => {
                             self.screen = AppScreen::ModelManager;
