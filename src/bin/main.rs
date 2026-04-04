@@ -3,9 +3,13 @@
 fn main() -> eframe::Result {
     tracing_subscriber::fmt().with_target(false).init();
 
+    let icon = eframe::icon_data::from_png_bytes(include_bytes!("../../assets/app-icon.png"))
+        .expect("embedded app icon should be a valid PNG");
+
     let viewport = eframe::egui::ViewportBuilder::default()
         .with_inner_size([700.0, 550.0])
-        .with_title("Whisper Burn");
+        .with_title("Whisper Burn")
+        .with_icon(icon);
 
     let options = eframe::NativeOptions {
         viewport,
