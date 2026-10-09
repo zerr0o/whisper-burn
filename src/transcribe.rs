@@ -31,7 +31,11 @@ pub struct InferenceState {
 }
 
 /// Transcribe an AudioBuffer, returning (text, inference_ms).
-pub fn transcribe(state: &InferenceState, audio: AudioBuffer, language: Language) -> Result<(String, u128)> {
+pub fn transcribe(
+    state: &InferenceState,
+    audio: AudioBuffer,
+    language: Language,
+) -> Result<(String, u128)> {
     let device = &state.device;
 
     // Resample to 16kHz if needed
@@ -44,12 +48,7 @@ pub fn transcribe(state: &InferenceState, audio: AudioBuffer, language: Language
 
     // Pad or truncate to 30 seconds
     let mut samples = audio.samples;
-    if samples.len() < WHISPER_CHUNK_SAMPLES {
-        samples.resize(WHISPER_CHUNK_SAMPLES, 0.0);
-    } else if samples.len() > WHISPER_CHUNK_SAMPLES {
-        // For now, truncate to 30s. Multi-chunk support can be added later.
-        samples.truncate(WHISPER_CHUNK_SAMPLES);
-    }
+    samples.resize(WHISPER_CHUNK_SAMPLES, 0.0);
 
     // Compute mel spectrogram
     let mel_extractor = MelSpectrogram::new(MelConfig::whisper_with_mels(state.n_mels));

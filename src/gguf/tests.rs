@@ -86,41 +86,6 @@ mod tests {
         output
     }
 
-    /// Build a minimal GGUF v3 file in memory with one Q4_0 tensor.
-    fn build_minimal_gguf(tensor_name: &str, shape: &[u64], q4_data: &[u8]) -> Vec<u8> {
-        let mut buf = Vec::new();
-
-        // Header
-        buf.extend_from_slice(&0x46554747u32.to_le_bytes()); // magic "GGUF"
-        buf.extend_from_slice(&3u32.to_le_bytes()); // version
-        buf.extend_from_slice(&1u64.to_le_bytes()); // tensor_count
-        buf.extend_from_slice(&1u64.to_le_bytes()); // metadata_kv_count
-
-        // Metadata KV: general.architecture = "whisper"
-        write_gguf_string(&mut buf, "general.architecture");
-        buf.extend_from_slice(&8u32.to_le_bytes()); // value type: STRING
-        write_gguf_string(&mut buf, "whisper");
-
-        // Tensor info
-        write_gguf_string(&mut buf, tensor_name);
-        buf.extend_from_slice(&(shape.len() as u32).to_le_bytes()); // n_dimensions
-        for &dim in shape {
-            buf.extend_from_slice(&dim.to_le_bytes());
-        }
-        buf.extend_from_slice(&2u32.to_le_bytes()); // dtype: Q4_0
-        buf.extend_from_slice(&0u64.to_le_bytes()); // offset (relative to data start)
-
-        // Alignment padding to 32 bytes
-        let alignment = 32;
-        let padding = (alignment - (buf.len() % alignment)) % alignment;
-        buf.extend(std::iter::repeat_n(0u8, padding));
-
-        // Tensor data
-        buf.extend_from_slice(q4_data);
-
-        buf
-    }
-
     /// Build a GGUF v3 file with multiple Q4_0 tensors.
     fn build_multi_tensor_gguf(tensors: &[(&str, &[u64], &[u8])]) -> Vec<u8> {
         let mut buf = Vec::new();
@@ -285,7 +250,8 @@ mod tests {
             .collect();
         let q4_data = quantize_f32_to_q4_0(&original);
 
-        let gguf_bytes = build_minimal_gguf("test.weight", &[32, 64], &q4_data);
+        let gguf_bytes =
+            build_multi_tensor_gguf(&[("test.weight", &[32u64, 64][..], q4_data.as_slice())]);
 
         let mut reader = GgufReader::from_bytes(&gguf_bytes).expect("Failed to parse GGUF");
 
@@ -299,6 +265,83 @@ mod tests {
         let raw = reader.tensor_data("test.weight").expect("Data not found");
         assert_eq!(raw.len(), q4_data.len());
         assert_eq!(raw, q4_data.as_slice());
+    }
+
+    #[test]
+    fn test_gguf_metadata_skipping() {
+        fn kv(buf: &mut Vec<u8>, key: &str, ty: u32, value: &[u8]) {
+            write_gguf_string(buf, key);
+            buf.extend_from_slice(&ty.to_le_bytes());
+            buf.extend_from_slice(value);
+        }
+        fn str_val(s: &str) -> Vec<u8> {
+            let mut v = (s.len() as u64).to_le_bytes().to_vec();
+            v.extend_from_slice(s.as_bytes());
+            v
+        }
+
+        let q4_data = quantize_f32_to_q4_0(&[0.5f32; 32]);
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&0x46554747u32.to_le_bytes());
+        buf.extend_from_slice(&3u32.to_le_bytes());
+        buf.extend_from_slice(&1u64.to_le_bytes()); // tensor_count
+        buf.extend_from_slice(&14u64.to_le_bytes()); // metadata_kv_count
+
+        // Scalar types 0..=7 and 10..=12: one entry per GGUF type code.
+        for (ty, width) in [
+            (0u32, 1),
+            (1, 1),
+            (2, 2),
+            (3, 2),
+            (4, 4),
+            (5, 4),
+            (6, 4),
+            (7, 1),
+        ] {
+            kv(&mut buf, "scalar", ty, &[0xAB; 4][..width]);
+        }
+        for ty in 10u32..=12 {
+            kv(&mut buf, "scalar", ty, &[0xAB; 8]);
+        }
+        kv(&mut buf, "string", 8, &str_val("hello"));
+        // Array of 2 u32 values
+        let mut arr = 4u32.to_le_bytes().to_vec(); // elem type u32
+        arr.extend_from_slice(&2u64.to_le_bytes());
+        arr.extend_from_slice(&[0xCD; 8]);
+        kv(&mut buf, "array", 9, &arr);
+        // Nested array: 2 arrays of 2 strings each
+        let mut inner = 8u32.to_le_bytes().to_vec(); // elem type string
+        inner.extend_from_slice(&2u64.to_le_bytes());
+        inner.extend_from_slice(&str_val("a"));
+        inner.extend_from_slice(&str_val("bcd"));
+        let mut outer = 9u32.to_le_bytes().to_vec(); // elem type array
+        outer.extend_from_slice(&2u64.to_le_bytes());
+        outer.extend_from_slice(&inner);
+        outer.extend_from_slice(&inner);
+        kv(&mut buf, "nested", 9, &outer);
+        // Tensor info
+        write_gguf_string(&mut buf, "t.weight");
+        buf.extend_from_slice(&1u32.to_le_bytes());
+        buf.extend_from_slice(&32u64.to_le_bytes());
+        buf.extend_from_slice(&2u32.to_le_bytes()); // Q4_0
+        buf.extend_from_slice(&0u64.to_le_bytes());
+        let padding = (32 - buf.len() % 32) % 32;
+        buf.extend(std::iter::repeat_n(0u8, padding));
+        buf.extend_from_slice(&q4_data);
+
+        let mut reader = GgufReader::from_bytes(&buf).expect("Failed to skip metadata");
+        assert_eq!(reader.tensor_count(), 1);
+        assert_eq!(reader.tensor_info("t.weight").unwrap().shape(), &[32]);
+        assert_eq!(reader.tensor_data("t.weight").unwrap(), q4_data);
+
+        // Unknown metadata value types are rejected.
+        let mut bad = Vec::new();
+        bad.extend_from_slice(&0x46554747u32.to_le_bytes());
+        bad.extend_from_slice(&3u32.to_le_bytes());
+        bad.extend_from_slice(&0u64.to_le_bytes());
+        bad.extend_from_slice(&1u64.to_le_bytes());
+        kv(&mut bad, "bad", 99, &[]);
+        assert!(GgufReader::from_bytes(&bad).is_err());
     }
 
     #[test]
@@ -419,6 +462,8 @@ mod tests {
             (1, 1, 128, 64, 1e-2, "small projection"),
             (1, 1, 1280, 1280, 1e-2, "decoder attn qkv (M=1)"),
             (1, 10, 1280, 1280, 1e-2, "encoder attn qkv"),
+            (4, 10, 128, 64, 1e-3, "batched projection"),
+            (1, 32, 1280, 1280, 1e-2, "encoder projection"),
             (1, 1, 1280, 5120, 1e-2, "decoder FFN fc1"),
             (1, 1, 5120, 1280, 1e-2, "decoder FFN fc2"),
         ];
@@ -597,64 +642,6 @@ mod tests {
     }
 
     // =========================================================================
-    // Batched q4_matmul test
-    // =========================================================================
-
-    #[test]
-    fn test_q4_matmul_batch() {
-        let device = Default::default();
-
-        let batch = 4;
-        let seq = 10;
-        let k = 128;
-        let n = 64;
-
-        let act_data: Vec<f32> = (0..batch * seq * k)
-            .map(|i| ((i as f32) * 0.001).sin() * 0.1)
-            .collect();
-        // Weights in [N, K] layout (out_features, in_features)
-        let weight_data: Vec<f32> = (0..n * k)
-            .map(|i| ((i as f32) * 0.0007).cos() * 0.05)
-            .collect();
-
-        let q4_bytes = quantize_f32_to_q4_0(&weight_data);
-        let weight_deq = dequantize_q4_0_to_f32(&q4_bytes, n * k);
-
-        let act_tensor = Tensor::<TestBackend, 3>::from_data(
-            TensorData::new(act_data, [batch, seq, k]),
-            &device,
-        );
-        // Dequantized weights are [N, K], transpose for Burn's standard matmul
-        let weight_deq_tensor =
-            Tensor::<TestBackend, 2>::from_data(TensorData::new(weight_deq, [n, k]), &device);
-        let expected = act_tensor
-            .clone()
-            .matmul(weight_deq_tensor.transpose().unsqueeze::<3>());
-
-        let q4_tensor =
-            Q4Tensor::from_q4_bytes(&q4_bytes, [n, k], &device).expect("Failed to create Q4Tensor");
-        let output = q4_matmul(act_tensor, &q4_tensor);
-
-        assert_eq!(output.dims(), [batch, seq, n]);
-
-        let output_data = output.to_data();
-        let expected_data = expected.to_data();
-        let out_slice = output_data.as_slice::<f32>().unwrap();
-        let exp_slice = expected_data.as_slice::<f32>().unwrap();
-
-        let mut max_diff: f32 = 0.0;
-        for (a, b) in out_slice.iter().zip(exp_slice.iter()) {
-            max_diff = max_diff.max((a - b).abs());
-        }
-        println!("Q4 matmul batch max diff: {:.4e}", max_diff);
-        assert!(
-            max_diff < 1e-3,
-            "Max diff {:.4e} exceeds tolerance 1e-3",
-            max_diff
-        );
-    }
-
-    // =========================================================================
     // Q4 roundtrip test (quantize -> upload -> dequantize -> compare)
     // =========================================================================
 
@@ -706,60 +693,62 @@ mod tests {
     }
 
     // =========================================================================
-    // Whisper-specific dimension tests
+    // Q4CrossAttention cache initialization
     // =========================================================================
 
     #[test]
-    fn test_q4_matmul_encoder_shape() {
-        // Whisper encoder: [1, 1500, 1280] x [1280, 1280]^T -> [1, 1500, 1280]
-        // Use smaller seq for test speed
+    fn test_q4_cross_attention_init_cache_matches_forward() {
+        use crate::model::attention::Q4CrossAttention;
+
         let device = Default::default();
+        let (d, q_len, enc_len) = (64usize, 2usize, 3usize);
 
-        let batch = 1;
-        let seq = 32; // reduced from 1500 for speed
-        let k = 1280;
-        let n = 1280;
+        // Tiny layer (1 head, head_dim 64); each projection gets different weights.
+        let linear = |seed: f32| {
+            let w: Vec<f32> = (0..d * d)
+                .map(|i| ((i as f32) * 0.013 + seed).sin() * 0.1)
+                .collect();
+            let q4 = Q4Tensor::from_q4_bytes(&quantize_f32_to_q4_0(&w), [d, d], &device)
+                .expect("Failed to create Q4Tensor");
+            Q4Linear::new(q4, None)
+        };
+        let attn = Q4CrossAttention::new(linear(0.1), linear(0.7), linear(1.3), linear(1.9), 1);
 
-        let act_data: Vec<f32> = (0..batch * seq * k)
-            .map(|i| ((i as f32) * 0.001).sin() * 0.1)
-            .collect();
-        let weight_data: Vec<f32> = (0..n * k)
-            .map(|i| ((i as f32) * 0.0007).cos() * 0.05)
-            .collect();
+        let input = |len: usize, scale: f32| {
+            let data: Vec<f32> = (0..len * d).map(|i| ((i as f32) * scale).cos()).collect();
+            Tensor::<TestBackend, 3>::from_data(TensorData::new(data, [1, len, d]), &device)
+        };
+        let x = input(q_len, 0.05);
+        let encoder = input(enc_len, 0.03);
 
-        let q4_bytes = quantize_f32_to_q4_0(&weight_data);
-        let weight_deq = dequantize_q4_0_to_f32(&q4_bytes, n * k);
+        let expected = attn.forward(x.clone(), encoder.clone());
+        let (out, k, v) = attn.forward_init_cache(x.clone(), &encoder);
+        assert_eq!(out.dims(), [1, q_len, d]);
+        assert_eq!(k.dims(), [1, enc_len, d]);
+        assert_eq!(v.dims(), [1, enc_len, d]);
 
-        let act_tensor = Tensor::<TestBackend, 3>::from_data(
-            TensorData::new(act_data, [batch, seq, k]),
-            &device,
-        );
-        let weight_deq_tensor =
-            Tensor::<TestBackend, 2>::from_data(TensorData::new(weight_deq, [n, k]), &device);
-        let expected = act_tensor
-            .clone()
-            .matmul(weight_deq_tensor.transpose().unsqueeze::<3>());
-
-        let q4_tensor = Q4Tensor::from_q4_bytes(&q4_bytes, [n, k], &device)
-            .expect("Failed to create Q4Tensor");
-        let output = q4_matmul(act_tensor, &q4_tensor);
-
-        assert_eq!(output.dims(), [batch, seq, n]);
-
-        let output_data = output.to_data();
-        let expected_data = expected.to_data();
-        let out_slice = output_data.as_slice::<f32>().unwrap();
-        let exp_slice = expected_data.as_slice::<f32>().unwrap();
-
-        let mut max_diff: f32 = 0.0;
-        for (a, b) in out_slice.iter().zip(exp_slice.iter()) {
-            max_diff = max_diff.max((a - b).abs());
-        }
-        println!("Q4 matmul encoder shape max diff: {:.4e}", max_diff);
+        let max_diff = |a: Tensor<TestBackend, 3>, b: Tensor<TestBackend, 3>| -> f32 {
+            let (a, b) = (a.to_data(), b.to_data());
+            let (a, b) = (a.as_slice::<f32>().unwrap(), b.as_slice::<f32>().unwrap());
+            a.iter()
+                .zip(b)
+                .map(|(x, y)| (x - y).abs())
+                .fold(0.0, f32::max)
+        };
+        let init_diff = max_diff(out, expected.clone());
         assert!(
-            max_diff < 1e-2,
-            "Max diff {:.4e} exceeds tolerance 1e-2",
-            max_diff
+            init_diff < 1e-4,
+            "init_cache vs forward diff {:.4e}",
+            init_diff
+        );
+
+        // Reusing the returned K/V must reproduce the same output.
+        let (reused, _, _) = attn.forward_with_cache(x, &encoder, Some(k), Some(v));
+        let reuse_diff = max_diff(reused, expected);
+        assert!(
+            reuse_diff < 1e-4,
+            "cached vs forward diff {:.4e}",
+            reuse_diff
         );
     }
 }

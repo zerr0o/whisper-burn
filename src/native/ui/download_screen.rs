@@ -1,6 +1,7 @@
 use eframe::egui;
 use std::sync::atomic::Ordering;
 
+use super::theme;
 use crate::native::download::{DownloadProgress, ModelVariant};
 
 pub enum ChooseAction {
@@ -15,130 +16,184 @@ pub enum ConfirmAction {
     None,
 }
 
+/// Eyebrow + title + muted subtitle, shared by the setup screens.
+pub(super) fn header(ui: &mut egui::Ui, eyebrow: &str, title: &str, subtitle: &str) {
+    ui.label(theme::eyebrow(eyebrow).color(theme::ACCENT));
+    ui.add_space(4.0);
+    ui.label(theme::heading(title));
+    ui.add_space(4.0);
+    ui.label(egui::RichText::new(subtitle).size(13.5).color(theme::MUTED));
+    ui.add_space(20.0);
+}
+
+/// One-line factual description of a model variant.
+pub(super) fn blurb(variant: ModelVariant) -> &'static str {
+    match variant {
+        ModelVariant::LargeV3 => "1.55B parameters. Best accuracy.",
+        ModelVariant::Medium => "769M parameters. Faster, lower VRAM.",
+    }
+}
+
 pub fn draw_choose_model(ui: &mut egui::Ui) -> ChooseAction {
-    ui.vertical_centered(|ui| {
-        ui.add_space(60.0);
-        ui.heading("Whisper Burn");
-        ui.add_space(20.0);
-        ui.label("Choose a model to download:");
-        ui.add_space(20.0);
+    let mut action = ChooseAction::None;
 
-        let mut action = ChooseAction::None;
+    header(
+        ui,
+        "WHISPER BURN",
+        "Choose a model",
+        "Pick a model to download. Everything runs locally on your GPU.",
+    );
 
-        ui.group(|ui| {
-            ui.set_min_width(400.0);
-            ui.vertical(|ui| {
-                if ui
-                    .button(egui::RichText::new("Whisper Large V3 (Recommended)").size(16.0))
-                    .clicked()
-                {
-                    action = ChooseAction::Select(ModelVariant::LargeV3);
-                }
-                ui.label(
-                    egui::RichText::new("  1.55B params | ~800 MB | Best accuracy")
-                        .size(12.0)
-                        .color(egui::Color32::from_gray(140)),
-                );
-                ui.add_space(12.0);
-
-                if ui
-                    .button(egui::RichText::new("Whisper Medium (Lightweight)").size(16.0))
-                    .clicked()
-                {
-                    action = ChooseAction::Select(ModelVariant::Medium);
-                }
-                ui.label(
-                    egui::RichText::new("  769M params | ~604 MB | Fastest, lower VRAM")
-                        .size(12.0)
-                        .color(egui::Color32::from_gray(140)),
-                );
+    for variant in [ModelVariant::LargeV3, ModelVariant::Medium] {
+        let recommended = variant == ModelVariant::LargeV3;
+        let mut frame = theme::card();
+        if recommended {
+            frame = frame.stroke(egui::Stroke::new(1.0_f32, theme::ACCENT));
+        }
+        frame.show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_top(|ui| {
+                let left = (ui.available_width() - 130.0).max(160.0);
+                ui.vertical(|ui| {
+                    ui.set_max_width(left);
+                    if recommended {
+                        ui.label(theme::eyebrow("RECOMMENDED").color(theme::ACCENT));
+                    } else {
+                        ui.label(theme::eyebrow("LIGHTWEIGHT").color(theme::DIM));
+                    }
+                    ui.add_space(2.0);
+                    ui.label(
+                        egui::RichText::new(variant.display_name())
+                            .size(17.0)
+                            .strong()
+                            .color(theme::TEXT),
+                    );
+                    ui.add_space(2.0);
+                    ui.label(egui::RichText::new(blurb(variant)).color(theme::MUTED));
+                    ui.label(
+                        egui::RichText::new(format!("Download {}", variant.gguf_size_hint()))
+                            .size(12.5)
+                            .color(theme::DIM),
+                    );
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                    let clicked = if recommended {
+                        theme::primary_button(ui, "Download").clicked()
+                    } else {
+                        theme::secondary_button(ui, "Download").clicked()
+                    };
+                    if clicked {
+                        action = ChooseAction::Select(variant);
+                    }
+                });
             });
         });
+        ui.add_space(12.0);
+    }
 
-        ui.add_space(20.0);
-        if ui.button("Quit").clicked() {
-            action = ChooseAction::Quit;
-        }
+    ui.add_space(4.0);
+    if theme::secondary_button(ui, "Quit").clicked() {
+        action = ChooseAction::Quit;
+    }
 
-        action
-    })
-    .inner
+    action
 }
 
 pub fn draw_confirm(ui: &mut egui::Ui, variant: ModelVariant) -> ConfirmAction {
-    ui.vertical_centered(|ui| {
-        ui.add_space(80.0);
-        ui.heading("Whisper Burn");
-        ui.add_space(20.0);
-        ui.label("The model files need to be downloaded.");
-        ui.add_space(8.0);
-        ui.label("Required files:");
-        ui.label(format!(
-            "  {}  ({})",
-            variant.gguf_filename(),
-            variant.gguf_size_hint()
-        ));
-        ui.label("  tokenizer.json      (~2 MB)");
-        ui.add_space(20.0);
+    let mut action = ConfirmAction::None;
 
-        let mut action = ConfirmAction::None;
+    header(
+        ui,
+        "WHISPER BURN",
+        "Download required files",
+        "These files are needed before the first transcription.",
+    );
+
+    theme::card().show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.label(theme::eyebrow("REQUIRED FILES").color(theme::DIM));
+        ui.add_space(8.0);
+        file_row(ui, variant.gguf_filename(), variant.gguf_size_hint());
+        ui.add_space(6.0);
+        file_row(ui, "tokenizer.json", "~2 MB");
+        ui.add_space(10.0);
+        ui.separator();
+        ui.add_space(4.0);
         ui.horizontal(|ui| {
-            if ui
-                .button(egui::RichText::new("Download").size(18.0))
-                .clicked()
-            {
-                action = ConfirmAction::Download;
-            }
-            ui.add_space(16.0);
-            if ui.button("Back").clicked() {
-                action = ConfirmAction::Back;
-            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if theme::primary_button(ui, "Download").clicked() {
+                    action = ConfirmAction::Download;
+                }
+                if theme::secondary_button(ui, "Back").clicked() {
+                    action = ConfirmAction::Back;
+                }
+            });
         });
-        action
-    })
-    .inner
+    });
+
+    action
+}
+
+fn file_row(ui: &mut egui::Ui, name: &str, size: &str) {
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(name).monospace().color(theme::TEXT));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(egui::RichText::new(size).color(theme::MUTED));
+        });
+    });
 }
 
 pub fn draw_progress(ui: &mut egui::Ui, progress: &DownloadProgress, variant: ModelVariant) {
-    ui.vertical_centered(|ui| {
-        ui.add_space(80.0);
-        ui.heading("Downloading model files...");
-        ui.add_space(30.0);
+    header(
+        ui,
+        "WHISPER BURN",
+        "Downloading model files",
+        "Keep the app open until both files finish.",
+    );
 
-        // Tokenizer progress
-        let tok_bytes = progress.tokenizer_bytes.load(Ordering::Relaxed);
-        let tok_total = progress.tokenizer_total.load(Ordering::Relaxed);
-        ui.label("Tokenizer (tokenizer.json)");
-        if tok_total > 0 {
-            let frac = tok_bytes as f32 / tok_total as f32;
-            ui.add(egui::ProgressBar::new(frac).text(format_bytes(tok_bytes, tok_total)));
-        } else if tok_bytes > 0 {
-            ui.add(
-                egui::ProgressBar::new(0.0)
-                    .text(format!("{} downloaded", human_bytes(tok_bytes))),
-            );
-        } else {
-            ui.add(egui::ProgressBar::new(0.0).text("Waiting..."));
-        }
-
-        ui.add_space(16.0);
-
-        // GGUF progress
-        let gguf_bytes = progress.gguf_bytes.load(Ordering::Relaxed);
-        let gguf_total = progress.gguf_total.load(Ordering::Relaxed);
-        ui.label(format!("Model ({})", variant.gguf_filename()));
-        if gguf_total > 0 {
-            let frac = gguf_bytes as f32 / gguf_total as f32;
-            ui.add(egui::ProgressBar::new(frac).text(format_bytes(gguf_bytes, gguf_total)));
-        } else if gguf_bytes > 0 {
-            ui.add(
-                egui::ProgressBar::new(0.0)
-                    .text(format!("{} downloaded", human_bytes(gguf_bytes))),
-            );
-        } else {
-            ui.add(egui::ProgressBar::new(0.0).text("Waiting..."));
-        }
+    theme::card().show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        progress_row(
+            ui,
+            "Tokenizer (tokenizer.json)",
+            progress.tokenizer_bytes.load(Ordering::Relaxed),
+            progress.tokenizer_total.load(Ordering::Relaxed),
+        );
+        ui.add_space(18.0);
+        progress_row(
+            ui,
+            &format!("Model ({})", variant.gguf_filename()),
+            progress.gguf_bytes.load(Ordering::Relaxed),
+            progress.gguf_total.load(Ordering::Relaxed),
+        );
     });
+}
+
+fn progress_row(ui: &mut egui::Ui, label: &str, bytes: u64, total: u64) {
+    let (frac, caption) = if total > 0 {
+        let frac = (bytes as f32 / total as f32).clamp(0.0, 1.0);
+        let percent = (bytes as u128 * 100 / total as u128).min(100);
+        (
+            frac,
+            format!("{percent}%  ·  {}", format_bytes(bytes, total)),
+        )
+    } else if bytes > 0 {
+        (0.0, format!("{} downloaded", human_bytes(bytes)))
+    } else {
+        (0.0, "Waiting...".to_owned())
+    };
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(label).color(theme::TEXT));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(egui::RichText::new(caption).size(12.5).color(theme::MUTED));
+        });
+    });
+    ui.add_space(6.0);
+    ui.add(
+        egui::ProgressBar::new(frac)
+            .fill(theme::ACCENT)
+            .desired_height(8.0),
+    );
 }
 
 fn format_bytes(current: u64, total: u64) -> String {

@@ -3,8 +3,7 @@
 //! Computes log mel spectrograms from audio samples using Whisper's audio
 //! input specifications (16kHz, 128 mel bins, hop=160, window=400).
 
-use num_complex::Complex;
-use rustfft::{num_complex::Complex as FftComplex, FftPlanner};
+use rustfft::{num_complex::Complex, FftPlanner};
 use std::f32::consts::PI;
 
 /// Configuration for mel spectrogram computation.
@@ -202,26 +201,21 @@ impl MelSpectrogram {
         for i in 0..n_frames {
             let start = i * hop_length;
 
-            let mut buffer: Vec<FftComplex<f32>> = (0..n_fft)
+            let mut buffer: Vec<Complex<f32>> = (0..n_fft)
                 .map(|j| {
                     let sample = if j < win_length && start + j < padded.len() {
                         padded[start + j] * self.window[j]
                     } else {
                         0.0
                     };
-                    FftComplex::new(sample, 0.0)
+                    Complex::new(sample, 0.0)
                 })
                 .collect();
 
             fft.process(&mut buffer);
 
-            let frame: Vec<Complex<f32>> = buffer
-                .iter()
-                .take(n_fft / 2 + 1)
-                .map(|c| Complex::new(c.re, c.im))
-                .collect();
-
-            result.push(frame);
+            buffer.truncate(n_fft / 2 + 1);
+            result.push(buffer);
         }
 
         result
@@ -317,5 +311,34 @@ impl MelSpectrogram {
         (0..length)
             .map(|i| 0.5 * (1.0 - (2.0 * PI * i as f32 / length as f32).cos()))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stft_keeps_positive_bins_and_silence_mels() {
+        let extractor = MelSpectrogram::whisper();
+        let frames = extractor.stft(&[1.0; 400]);
+        assert_eq!(frames.len(), 2);
+        for frame in frames {
+            assert_eq!(frame.len(), 201);
+            assert!((frame[0].re - 200.0).abs() < 1e-3);
+            assert!(frame[0].im.abs() < 1e-3);
+            assert!((frame[1].norm() - 100.0).abs() < 1e-3);
+            assert!(frame[2..].iter().all(|value| value.norm() < 1e-3));
+        }
+        for n_mels in [80, 128] {
+            let mel =
+                MelSpectrogram::new(MelConfig::whisper_with_mels(n_mels)).compute_log(&[0.0; 480]);
+            assert_eq!(mel.len(), 3);
+            assert!(mel.iter().all(|frame| frame.len() == n_mels));
+            assert!(mel
+                .iter()
+                .flatten()
+                .all(|&value| (value + 1.5).abs() < 1e-6));
+        }
     }
 }

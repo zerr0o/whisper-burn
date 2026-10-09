@@ -1,8 +1,8 @@
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 /// Model variant selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,7 +29,7 @@ impl ModelVariant {
     pub fn gguf_size_hint(&self) -> &'static str {
         match self {
             Self::Medium => "~604 MB",
-            Self::LargeV3 => "~800 MB",
+            Self::LargeV3 => "~1.05 GB",
         }
     }
 
@@ -44,26 +44,14 @@ impl ModelVariant {
 const TOKENIZER_URL: &str =
     "https://huggingface.co/zerr0o/whisper-burn-gguf/resolve/main/tokenizer.json";
 
+#[derive(Default)]
 pub struct DownloadProgress {
-    pub gguf_bytes: Arc<AtomicU64>,
-    pub gguf_total: Arc<AtomicU64>,
-    pub tokenizer_bytes: Arc<AtomicU64>,
-    pub tokenizer_total: Arc<AtomicU64>,
-    pub error: Arc<std::sync::Mutex<Option<String>>>,
-    pub done: Arc<std::sync::atomic::AtomicBool>,
-}
-
-impl DownloadProgress {
-    pub fn new() -> Self {
-        Self {
-            gguf_bytes: Arc::new(AtomicU64::new(0)),
-            gguf_total: Arc::new(AtomicU64::new(0)),
-            tokenizer_bytes: Arc::new(AtomicU64::new(0)),
-            tokenizer_total: Arc::new(AtomicU64::new(0)),
-            error: Arc::new(std::sync::Mutex::new(None)),
-            done: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        }
-    }
+    pub gguf_bytes: AtomicU64,
+    pub gguf_total: AtomicU64,
+    pub tokenizer_bytes: AtomicU64,
+    pub tokenizer_total: AtomicU64,
+    pub error: Mutex<Option<String>>,
+    pub done: AtomicBool,
 }
 
 pub fn models_dir() -> PathBuf {
@@ -86,36 +74,37 @@ pub fn models_present(variant: ModelVariant) -> bool {
     gguf_path(variant).exists() && tokenizer_path().exists()
 }
 
-pub fn spawn_download(progress: &DownloadProgress, variant: ModelVariant) {
-    let gguf_bytes = Arc::clone(&progress.gguf_bytes);
-    let gguf_total = Arc::clone(&progress.gguf_total);
-    let tok_bytes = Arc::clone(&progress.tokenizer_bytes);
-    let tok_total = Arc::clone(&progress.tokenizer_total);
-    let error = Arc::clone(&progress.error);
-    let done = Arc::clone(&progress.done);
+pub fn spawn_download(progress: &Arc<DownloadProgress>, variant: ModelVariant) {
+    let p = Arc::clone(progress);
 
     std::thread::spawn(move || {
         let dir = models_dir();
         if let Err(e) = fs::create_dir_all(&dir) {
-            *error.lock().unwrap() = Some(format!("Cannot create models dir: {e}"));
-            done.store(true, Ordering::SeqCst);
+            *p.error.lock().unwrap() = Some(format!("Cannot create models dir: {e}"));
+            p.done.store(true, Ordering::SeqCst);
             return;
         }
 
-        if let Err(e) = download_file(TOKENIZER_URL, &tokenizer_path(), &tok_bytes, &tok_total) {
-            *error.lock().unwrap() = Some(format!("Tokenizer download failed: {e}"));
-            done.store(true, Ordering::SeqCst);
+        if let Err(e) = download_file(
+            TOKENIZER_URL,
+            &tokenizer_path(),
+            &p.tokenizer_bytes,
+            &p.tokenizer_total,
+        ) {
+            *p.error.lock().unwrap() = Some(format!("Tokenizer download failed: {e}"));
+            p.done.store(true, Ordering::SeqCst);
             return;
         }
 
         let gguf_url = variant.gguf_url();
-        if let Err(e) = download_file(&gguf_url, &gguf_path(variant), &gguf_bytes, &gguf_total) {
-            *error.lock().unwrap() = Some(format!("GGUF download failed: {e}"));
-            done.store(true, Ordering::SeqCst);
+        if let Err(e) = download_file(&gguf_url, &gguf_path(variant), &p.gguf_bytes, &p.gguf_total)
+        {
+            *p.error.lock().unwrap() = Some(format!("GGUF download failed: {e}"));
+            p.done.store(true, Ordering::SeqCst);
             return;
         }
 
-        done.store(true, Ordering::SeqCst);
+        p.done.store(true, Ordering::SeqCst);
     });
 }
 

@@ -61,6 +61,10 @@ build.bat test     :: Run tests
 build.bat clean    :: Clean build
 ```
 
+The Windows executable embeds `assets/app-icon.ico`; the app window uses
+`assets/app-icon.png`. Update both when changing the icon. The checked-in ICO
+contains 16, 24, 32, 48, 64, 128, and 256 px sizes; builds do not regenerate it.
+
 ### Library only (no GUI)
 
 ```bash
@@ -141,12 +145,35 @@ python scripts/convert_whisper.py --model openai/whisper-large-v3 --output model
 ## Testing
 
 ```bash
-cargo test                          # All 13 tests
+cargo test                          # All Rust tests
 cargo test gguf::tests              # GGUF module only
 cargo test test_q4_matmul_small     # Single test
 ```
 
-Tests cover Q4_0 dequantization, GGUF v3 parsing, GPU dequant, Q4 matmul kernel (1280x1280), Q4Linear, Q4FFN, batched matmul, and quantize-roundtrip.
+Tests cover Q4_0 dequantization, GGUF v3 parsing and metadata skipping, GPU dequant,
+Q4 matmul (including batched and encoder shapes), Q4Linear, Q4FFN, cross-attention
+cache initialization, quantize-roundtrip, audio FFT/mel output, and native loading state.
+Headless egui checks cover compact layouts at 100%/125% DPI and activity-indicator visibility.
+
+Check the conversion script's tensor selection and name mapping without downloading a model:
+
+```bash
+uv run --no-project --with numpy python scripts/test_convert_whisper.py
+```
+
+### UI preview (no inference)
+
+```bash
+cargo run --example ui-preview -- ready
+```
+
+This native gallery renders the actual UI with sample text and in-memory settings.
+It never opens the microphone, starts inference, downloads files, or saves settings.
+Other views: `empty`, `models`, `recording`, `processing`, `choose`, `confirm`,
+`download`, and `loading`. Model availability still reflects files next to the
+preview executable. In the preview only, F1–F9 switch views in the order above
+(`ready` first); F10 uses 640×580, F11 uses 620×540, and F12 restores 780×640.
+These preview shortcuts are paused while capturing a new dictation shortcut.
 
 ## Feature Flags
 

@@ -75,25 +75,14 @@ def quantize_q4_0(tensor: np.ndarray) -> bytes:
 
 
 def should_quantize(name: str, shape: tuple) -> bool:
-    """Decide whether a tensor should be quantized to Q4_0."""
-    # Only quantize 2D weight matrices that are large enough
-    if len(shape) != 2:
-        return False
-    if min(shape) < 256:
-        return False
-    # Don't quantize embeddings, biases, or normalization weights
-    if "bias" in name:
-        return False
-    if "ln" in name or "layer_norm" in name:
-        return False
-    if "positional_embedding" in name:
-        return False
-    if "token_embedding" in name:
-        return False
-    # Don't quantize conv weights (they're small and 3D originally)
-    if "conv" in name:
-        return False
-    return True
+    """Quantize large 2D weights, except embeddings, biases, norms, and convs."""
+    return (
+        len(shape) == 2
+        and min(shape) >= 256
+        and not any(part in name for part in (
+            "bias", "ln", "layer_norm", "positional_embedding", "token_embedding", "conv"
+        ))
+    )
 
 
 def write_gguf_string(f, s: str):
@@ -224,9 +213,7 @@ def convert_model(model_name: str, output_path: str):
 def hf_name_to_gguf(hf_name: str) -> str | None:
     """Map a HuggingFace Whisper parameter name to GGUF convention."""
     # Remove 'model.' prefix
-    name = hf_name
-    if name.startswith("model."):
-        name = name[len("model."):]
+    name = hf_name.removeprefix("model.")
 
     # Encoder mappings
     if name.startswith("encoder."):

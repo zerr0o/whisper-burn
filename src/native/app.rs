@@ -1,5 +1,7 @@
 use eframe::egui;
 use std::sync::atomic::Ordering;
+use std::sync::mpsc::{Receiver, TryRecvError};
+use std::sync::Arc;
 use std::time::Instant;
 use tracing::info;
 
@@ -13,17 +15,15 @@ use super::audio_capture::AudioCapture;
 use super::config::{self, AppConfig};
 use super::download::{self, DownloadProgress, ModelVariant};
 use super::hotkey::{HotkeyCapture, HotkeyEvent, HotkeyState};
-use super::inference::{
-    InferenceHandle, InferenceRequest, InferenceResponse, spawn_inference_thread,
-};
+use super::inference::{spawn_inference_thread, InferenceHandle, InferenceRequest};
 use super::ui::status_indicator::AppStatus;
 
 pub enum AppScreen {
     CheckModel,
     ChooseModel,
     ConfirmDownload(ModelVariant),
-    Downloading(DownloadProgress, ModelVariant),
-    LoadingModel(ModelVariant),
+    Downloading(Arc<DownloadProgress>, ModelVariant),
+    LoadingModel(ModelVariant, Receiver<Result<InferenceState, String>>),
     Ready,
     Recording {
         capture: AudioCapture,
@@ -95,7 +95,6 @@ impl NativeApp {
             ModelVariant::LargeV3 => "large-v3".into(),
         };
         self.save_config();
-        self.screen = AppScreen::LoadingModel(variant);
         let gguf_path = download::gguf_path(variant);
         let tokenizer_path = download::tokenizer_path();
 
@@ -125,9 +124,7 @@ impl NativeApp {
             let _ = tx.send(result);
         });
 
-        LOAD_RX.with(|cell| {
-            *cell.borrow_mut() = Some(rx);
-        });
+        self.screen = AppScreen::LoadingModel(variant, rx);
     }
 
     fn start_recording(&mut self) {
@@ -197,7 +194,7 @@ impl NativeApp {
             self.status = AppStatus::Processing;
 
             if let Some(handle) = &self.inference {
-                let _ = handle.tx.send(InferenceRequest::Transcribe {
+                let _ = handle.tx.send(InferenceRequest {
                     samples: all_samples,
                     sample_rate,
                     language: self.selected_lang,
@@ -207,9 +204,13 @@ impl NativeApp {
     }
 }
 
-thread_local! {
-    static LOAD_RX: std::cell::RefCell<Option<std::sync::mpsc::Receiver<Result<InferenceState, String>>>> =
-        std::cell::RefCell::new(None);
+/// Non-blocking poll of a one-shot load channel. `None` = still loading.
+fn poll_load<T>(rx: &Receiver<Result<T, String>>) -> Option<Result<T, String>> {
+    match rx.try_recv() {
+        Ok(result) => Some(result),
+        Err(TryRecvError::Empty) => None,
+        Err(TryRecvError::Disconnected) => Some(Err("Model loading thread crashed".into())),
+    }
 }
 
 impl eframe::App for NativeApp {
@@ -218,11 +219,9 @@ impl eframe::App for NativeApp {
         if !self.repaint_thread_started {
             self.repaint_thread_started = true;
             let ctx_clone = ctx.clone();
-            std::thread::spawn(move || {
-                loop {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                    ctx_clone.request_repaint();
-                }
+            std::thread::spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                ctx_clone.request_repaint();
             });
         }
 
@@ -245,10 +244,7 @@ impl eframe::App for NativeApp {
         if let Some(handle) = &self.inference {
             while let Ok(resp) = handle.rx.try_recv() {
                 match resp {
-                    InferenceResponse::Result {
-                        text,
-                        inference_ms,
-                    } => {
+                    Ok((text, inference_ms)) => {
                         self.last_result = text.clone();
                         self.last_inference_ms = inference_ms;
                         self.status = AppStatus::Done;
@@ -263,7 +259,7 @@ impl eframe::App for NativeApp {
                             });
                         }
                     }
-                    InferenceResponse::Error(e) => {
+                    Err(e) => {
                         self.error_msg = Some(e);
                         self.status = AppStatus::Ready;
                         self.screen = AppScreen::Ready;
@@ -289,27 +285,8 @@ impl eframe::App for NativeApp {
         }
 
         // Check model loading completion
-        if matches!(self.screen, AppScreen::LoadingModel(_)) {
-            let result = LOAD_RX.with(|cell| {
-                let mut rx = cell.borrow_mut();
-                if let Some(ref receiver) = *rx {
-                    match receiver.try_recv() {
-                        Ok(result) => {
-                            *rx = None;
-                            Some(result)
-                        }
-                        Err(std::sync::mpsc::TryRecvError::Empty) => None,
-                        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                            *rx = None;
-                            Some(Err("Model loading thread crashed".into()))
-                        }
-                    }
-                } else {
-                    None
-                }
-            });
-
-            if let Some(result) = result {
+        if let AppScreen::LoadingModel(_, rx) = &self.screen {
+            if let Some(result) = poll_load(rx) {
                 match result {
                     Ok(state) => {
                         info!("Model loaded, starting inference thread");
@@ -353,99 +330,112 @@ impl eframe::App for NativeApp {
         }
 
         // Render UI
-        egui::CentralPanel::default().show(ctx, |ui| {
-            if let Some(ref err) = self.error_msg {
-                ui.colored_label(egui::Color32::RED, format!("Error: {err}"));
-                ui.separator();
-            }
+        super::ui::theme::footer(ctx);
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::new()
+                    .fill(super::ui::theme::BG)
+                    .inner_margin(24),
+            )
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        if let Some(ref err) = self.error_msg {
+                            ui.colored_label(super::ui::theme::RED, format!("Error: {err}"));
+                            ui.add_space(8.0);
+                        }
 
-            match &self.screen {
-                AppScreen::CheckModel => {
-                    super::ui::loading_screen::draw(ui, "Checking model files...");
-                }
-                AppScreen::ChooseModel => {
-                    let action = super::ui::download_screen::draw_choose_model(ui);
-                    match action {
-                        super::ui::download_screen::ChooseAction::Select(variant) => {
-                            self.error_msg = None;
-                            self.selected_variant = variant;
-                            self.screen = AppScreen::ConfirmDownload(variant);
-                        }
-                        super::ui::download_screen::ChooseAction::Quit => {
-                            std::process::exit(0);
-                        }
-                        super::ui::download_screen::ChooseAction::None => {}
-                    }
-                }
-                AppScreen::ConfirmDownload(variant) => {
-                    let variant = *variant;
-                    let action = super::ui::download_screen::draw_confirm(ui, variant);
-                    match action {
-                        super::ui::download_screen::ConfirmAction::Download => {
-                            self.error_msg = None;
-                            let progress = DownloadProgress::new();
-                            download::spawn_download(&progress, variant);
-                            self.screen = AppScreen::Downloading(progress, variant);
-                        }
-                        super::ui::download_screen::ConfirmAction::Back => {
-                            self.screen = AppScreen::ChooseModel;
-                        }
-                        super::ui::download_screen::ConfirmAction::None => {}
-                    }
-                }
-                AppScreen::Downloading(ref progress, variant) => {
-                    super::ui::download_screen::draw_progress(ui, progress, *variant);
-                }
-                AppScreen::LoadingModel(variant) => {
-                    let msg = format!("Loading {} (this may take a minute)...", variant.display_name());
-                    super::ui::loading_screen::draw(ui, &msg);
-                }
-                AppScreen::Ready | AppScreen::Transcribing => {
-                    let action = super::ui::main_screen::draw_ready(
-                        ui,
-                        &self.last_result,
-                        self.last_inference_ms,
-                        self.selected_variant,
-                        &mut self.config,
-                        self.status,
-                        &mut self.hotkey_capture,
-                    );
-                    match action {
-                        super::ui::main_screen::MainAction::HotkeyChanged => {
-                            self.save_config();
-                        }
-                        super::ui::main_screen::MainAction::ConfigChanged => {
-                            self.sync_lang_from_config();
-                            self.save_config();
-                        }
-                        super::ui::main_screen::MainAction::OpenModelManager => {
-                            self.screen = AppScreen::ModelManager;
-                        }
-                        super::ui::main_screen::MainAction::None => {}
-                    }
-                }
-                AppScreen::Recording {
-                    all_samples,
-                    started_at,
-                    sample_rate,
-                    ..
-                } => {
-                    let elapsed = started_at.elapsed();
-                    let hotkey_display = HotkeyState::display_string(&self.config);
-                    super::ui::main_screen::draw_recording(
-                        ui,
-                        all_samples,
-                        *sample_rate,
-                        elapsed,
-                        &hotkey_display,
-                    );
-                }
-                AppScreen::ModelManager => {
-                    let action = super::ui::model_manager_screen::draw(
-                        ui,
-                        self.selected_variant,
-                    );
-                    match action {
+                        match &self.screen {
+                            AppScreen::CheckModel => {
+                                super::ui::loading_screen::draw(ui, "Checking model files...");
+                            }
+                            AppScreen::ChooseModel => {
+                                let action = super::ui::download_screen::draw_choose_model(ui);
+                                match action {
+                                    super::ui::download_screen::ChooseAction::Select(variant) => {
+                                        self.error_msg = None;
+                                        self.selected_variant = variant;
+                                        self.screen = AppScreen::ConfirmDownload(variant);
+                                    }
+                                    super::ui::download_screen::ChooseAction::Quit => {
+                                        std::process::exit(0);
+                                    }
+                                    super::ui::download_screen::ChooseAction::None => {}
+                                }
+                            }
+                            AppScreen::ConfirmDownload(variant) => {
+                                let variant = *variant;
+                                let action = super::ui::download_screen::draw_confirm(ui, variant);
+                                match action {
+                                    super::ui::download_screen::ConfirmAction::Download => {
+                                        self.error_msg = None;
+                                        let progress = Arc::new(DownloadProgress::default());
+                                        download::spawn_download(&progress, variant);
+                                        self.screen = AppScreen::Downloading(progress, variant);
+                                    }
+                                    super::ui::download_screen::ConfirmAction::Back => {
+                                        self.screen = AppScreen::ChooseModel;
+                                    }
+                                    super::ui::download_screen::ConfirmAction::None => {}
+                                }
+                            }
+                            AppScreen::Downloading(ref progress, variant) => {
+                                super::ui::download_screen::draw_progress(ui, progress, *variant);
+                            }
+                            AppScreen::LoadingModel(variant, _) => {
+                                let msg = format!(
+                                    "Loading {} (this may take a minute)...",
+                                    variant.display_name()
+                                );
+                                super::ui::loading_screen::draw(ui, &msg);
+                            }
+                            AppScreen::Ready | AppScreen::Transcribing => {
+                                let action = super::ui::main_screen::draw_ready(
+                                    ui,
+                                    &self.last_result,
+                                    self.last_inference_ms,
+                                    self.selected_variant,
+                                    &mut self.config,
+                                    self.status,
+                                    &mut self.hotkey_capture,
+                                );
+                                match action {
+                                    super::ui::main_screen::MainAction::HotkeyChanged => {
+                                        self.save_config();
+                                    }
+                                    super::ui::main_screen::MainAction::ConfigChanged => {
+                                        self.sync_lang_from_config();
+                                        self.save_config();
+                                    }
+                                    super::ui::main_screen::MainAction::OpenModelManager => {
+                                        self.screen = AppScreen::ModelManager;
+                                    }
+                                    super::ui::main_screen::MainAction::None => {}
+                                }
+                            }
+                            AppScreen::Recording {
+                                all_samples,
+                                started_at,
+                                sample_rate,
+                                ..
+                            } => {
+                                let elapsed = started_at.elapsed();
+                                let hotkey_display = HotkeyState::display_string(&self.config);
+                                super::ui::main_screen::draw_recording(
+                                    ui,
+                                    all_samples,
+                                    *sample_rate,
+                                    elapsed,
+                                    &hotkey_display,
+                                );
+                            }
+                            AppScreen::ModelManager => {
+                                let action = super::ui::model_manager_screen::draw(
+                                    ui,
+                                    self.selected_variant,
+                                );
+                                match action {
                         super::ui::model_manager_screen::ModelManagerAction::Back => {
                             self.screen = AppScreen::Ready;
                         }
@@ -460,14 +450,44 @@ impl eframe::App for NativeApp {
                         }
                         super::ui::model_manager_screen::ModelManagerAction::Download(variant) => {
                             self.error_msg = None;
-                            let progress = DownloadProgress::new();
+                            let progress = Arc::new(DownloadProgress::default());
                             download::spawn_download(&progress, variant);
                             self.screen = AppScreen::Downloading(progress, variant);
                         }
                         super::ui::model_manager_screen::ModelManagerAction::None => {}
                     }
-                }
-            }
-        });
+                            }
+                        }
+                    });
+            });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc::channel;
+
+    #[test]
+    fn poll_load_empty_ok_and_disconnected() {
+        let (tx, rx) = channel::<Result<u8, String>>();
+        assert!(poll_load(&rx).is_none());
+        tx.send(Ok(7)).unwrap();
+        assert_eq!(poll_load(&rx), Some(Ok(7)));
+        tx.send(Err("load failed".to_string())).unwrap();
+        assert_eq!(poll_load(&rx), Some(Err("load failed".to_string())));
+        drop(tx);
+        assert_eq!(
+            poll_load(&rx),
+            Some(Err("Model loading thread crashed".to_string()))
+        );
+    }
+
+    #[test]
+    fn download_progress_default_is_idle() {
+        let p = Arc::new(DownloadProgress::default());
+        assert!(!p.done.load(Ordering::SeqCst));
+        assert!(p.error.lock().unwrap().is_none());
+        assert_eq!(p.gguf_bytes.load(Ordering::SeqCst), 0);
     }
 }

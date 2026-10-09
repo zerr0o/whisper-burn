@@ -236,30 +236,15 @@ fn read_gguf_string<R: Read>(reader: &mut R) -> Result<String> {
 
 fn skip_gguf_value<R: Read + Seek>(reader: &mut R, value_type: u32) -> Result<()> {
     match value_type {
-        0 => {
+        0 | 1 | 7 => {
             reader.read_u8()?;
-        } // u8
-        1 => {
-            reader.read_i8()?;
-        } // i8
-        2 => {
+        } // u8, i8, bool
+        2 | 3 => {
             reader.seek(SeekFrom::Current(2))?;
-        } // u16
-        3 => {
-            reader.seek(SeekFrom::Current(2))?;
-        } // i16
-        4 => {
+        } // u16, i16
+        4..=6 => {
             reader.seek(SeekFrom::Current(4))?;
-        } // u32
-        5 => {
-            reader.seek(SeekFrom::Current(4))?;
-        } // i32
-        6 => {
-            reader.seek(SeekFrom::Current(4))?;
-        } // f32
-        7 => {
-            reader.read_u8()?;
-        } // bool (1 byte)
+        } // u32, i32, f32
         8 => {
             let _ = read_gguf_string(reader)?;
         } // string
@@ -271,15 +256,9 @@ fn skip_gguf_value<R: Read + Seek>(reader: &mut R, value_type: u32) -> Result<()
                 skip_gguf_value(reader, elem_type)?;
             }
         }
-        10 => {
+        10..=12 => {
             reader.seek(SeekFrom::Current(8))?;
-        } // u64
-        11 => {
-            reader.seek(SeekFrom::Current(8))?;
-        } // i64
-        12 => {
-            reader.seek(SeekFrom::Current(8))?;
-        } // f64
+        } // u64, i64, f64
         other => bail!("Unknown GGUF metadata value type: {other}"),
     }
     Ok(())

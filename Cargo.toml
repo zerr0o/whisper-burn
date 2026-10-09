@@ -8,7 +8,7 @@ license = "MIT"
 [features]
 default = ["wgpu", "native"]
 wgpu = ["burn/wgpu"]
-native = ["eframe", "cpal", "ureq", "wgpu", "arboard", "enigo", "dirs", "image", "windows"]
+native = ["eframe", "cpal", "ureq", "wgpu", "arboard", "enigo", "dirs", "windows"]
 
 [dependencies]
 # Burn ML framework
@@ -32,8 +32,6 @@ serde_json = "1.0"
 anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = "0.3"
-num-traits = "0.2"
-num-complex = "0.4"
 byteorder = "1.5"
 half = "2.7"
 
@@ -44,7 +42,6 @@ ureq = { version = "2.12", optional = true }
 arboard = { version = "3.4", optional = true }
 enigo = { version = "0.2", optional = true }
 dirs = { version = "6.0", optional = true }
-image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", optional = true, features = [
@@ -61,6 +58,11 @@ name = "whisper-native"
 path = "src/bin/main.rs"
 required-features = ["native"]
 
+[[example]]
+name = "ui-preview"
+path = "examples/ui_preview.rs"
+required-features = ["native"]
+
 [lib]
 crate-type = ["rlib"]
 
@@ -73,6 +75,4 @@ opt-level = 3
 cubecl-wgpu = { path = "patches/cubecl-wgpu-0.9.0" }
 
 [build-dependencies]
-ico = "0.4"
-image = { version = "0.25", default-features = false, features = ["png"] }
 winres = "0.1"
