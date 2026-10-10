@@ -171,6 +171,7 @@ Current test suite:
 - Coverage includes GGUF metadata parsing, CPU/GPU Q4 dequantization, table-driven q4 matmul shapes (including batching and encoder dimensions), Q4Linear, Q4FFN, cross-attention cache initialization, roundtrip checks, FFT/mel output, and loading channels
 - Headless egui tests in `src/native/ui/`: controls and card bounds at 780×640, 640×580, and 620×540 (100%/125% DPI), stable Ready/Processing layout, shortcut alignment, and activity-indicator visibility
 - Safe visual preview: `cargo run --example ui-preview -- ready` renders the production UI with fixtures, without microphone capture, inference, downloads, or config writes; see README for preview-only navigation keys
+- Off-screen renders: `cargo run --example ui-preview -- --snapshot <dir>` writes PPM images of every view at three sizes without opening a window; prefer it to desktop capture for visual checks
 - Conversion rules: `uv run --no-project --with numpy python scripts/test_convert_whisper.py`
 - Windows icon builds use the checked-in multi-size `assets/app-icon.ico`; update it together with `assets/app-icon.png` when changing the icon
 

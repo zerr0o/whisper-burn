@@ -175,6 +175,15 @@ preview executable. In the preview only, F1–F9 switch views in the order above
 (`ready` first); F10 uses 640×580, F11 uses 620×540, and F12 restores 780×640.
 These preview shortcuts are paused while capturing a new dictation shortcut.
 
+To render every view to images without opening a window:
+
+```bash
+cargo run --example ui-preview -- --snapshot target/ui-snapshots
+```
+
+This writes PPM files for each view at 780×640, 640×580 and 620×540 (125 % scale).
+A small CPU rasterizer draws egui's real output with the same blending as the app.
+
 ## Feature Flags
 
 | Flag | Default | Description |

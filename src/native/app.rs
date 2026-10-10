@@ -335,14 +335,14 @@ impl eframe::App for NativeApp {
             .frame(
                 egui::Frame::new()
                     .fill(super::ui::theme::BG)
-                    .inner_margin(24),
+                    .inner_margin(20),
             )
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         if let Some(ref err) = self.error_msg {
-                            ui.colored_label(super::ui::theme::RED, format!("Error: {err}"));
+                            super::ui::theme::error_banner(ui, &format!("Error: {err}"));
                             ui.add_space(8.0);
                         }
 

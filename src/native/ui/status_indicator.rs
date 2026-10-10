@@ -20,23 +20,27 @@ impl AppStatus {
     }
 }
 
+/// Status dot and label; the dot carries the state colour.
 pub fn draw_status(ui: &mut egui::Ui, status: AppStatus) {
     let color = match status {
-        AppStatus::Ready => theme::GREEN,
-        AppStatus::Recording => theme::ACCENT,
-        AppStatus::Processing | AppStatus::Done => theme::ACCENT,
+        AppStatus::Ready | AppStatus::Done => theme::GREEN,
+        AppStatus::Recording => theme::RED,
+        AppStatus::Processing => theme::ACCENT,
     };
-    egui::Frame::new()
-        .fill(theme::SURFACE)
-        .corner_radius(7)
-        .inner_margin(egui::Margin::symmetric(10, 7))
-        .show(ui, |ui| {
-            ui.spacing_mut().interact_size.y = 20.0;
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(7.0, 12.0), egui::Sense::hover());
-                ui.painter().circle_filled(rect.center(), 3.0, color);
-                ui.label(egui::RichText::new(status.label()).size(12.0).color(color));
-            });
-        });
+    let galley = ui.painter().layout_no_wrap(
+        status.label().to_owned(),
+        egui::FontId::proportional(12.5),
+        theme::MUTED,
+    );
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(galley.size().x + 25.0, 20.0),
+        egui::Sense::hover(),
+    );
+    ui.painter()
+        .circle_filled(egui::pos2(rect.left() + 9.5, rect.center().y), 3.0, color);
+    ui.painter().galley(
+        egui::pos2(rect.left() + 19.0, rect.center().y - galley.size().y / 2.0),
+        galley,
+        theme::MUTED,
+    );
 }

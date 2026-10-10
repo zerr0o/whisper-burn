@@ -17,6 +17,9 @@ pub enum MainAction {
     OpenModelManager,
 }
 
+/// Inner height of the status panel, identical for Ready and Processing.
+const PANEL_HEIGHT: f32 = 40.0;
+
 pub fn draw_ready(
     ui: &mut egui::Ui,
     last_result: &str,
@@ -28,171 +31,160 @@ pub fn draw_ready(
 ) -> MainAction {
     let mut action = MainAction::None;
     let hotkey_display = hotkey::HotkeyState::display_string(config);
+    let processing = status == AppStatus::Processing;
 
-    ui.horizontal(|ui| {
-        theme::brand(ui);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if theme::secondary_button(ui, "Models")
-                .on_hover_text("Manage local models")
-                .clicked()
-            {
-                action = MainAction::OpenModelManager;
-            }
-            status_indicator::draw_status(ui, status);
-        });
+    theme::top_bar(ui, |ui| {
+        if theme::secondary_button(ui, "Models")
+            .on_hover_text("Manage local models")
+            .clicked()
+        {
+            action = MainAction::OpenModelManager;
+        }
+        status_indicator::draw_status(ui, status);
     });
-    ui.add_space(4.0);
+    ui.add_space(10.0);
 
-    // The header stays visible; only the content below it can scroll.
+    // The app bar stays visible; only the content below it can scroll.
     egui::ScrollArea::vertical()
         .id_salt("dictation_body")
         .min_scrolled_height(0.0)
         .auto_shrink([false, false])
         .show(ui, |ui| {
+            // The transcript takes the height left by the other blocks, measured on the previous pass.
+            let fixed_id = ui.id().with("fixed_height");
+            let fixed_height: f32 = ui.data(|data| data.get_temp(fixed_id)).unwrap_or(330.0);
+            let transcript_height = (ui.available_height() - fixed_height).clamp(60.0, 300.0);
             theme::card()
-                .fill(theme::ACCENT_BG)
-                .inner_margin(12)
-                .stroke(egui::Stroke::new(
-                    1.0_f32,
-                    egui::Color32::from_rgb(78, 62, 51),
-                ))
+                .inner_margin(egui::Margin::symmetric(14, 10))
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    let left_width = (ui.available_width() - 170.0).max(220.0);
-                    ui.horizontal(|ui| {
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(left_width, 58.0),
-                            egui::Layout::left_to_right(egui::Align::Center),
-                            |ui| {
-                                ui.set_min_size(egui::vec2(left_width, 58.0));
-                                microphone(ui, 44.0, theme::ACCENT);
-                                ui.add_space(6.0);
-                                ui.vertical(|ui| {
-                                    ui.label(
-                                        theme::heading(if status == AppStatus::Processing {
-                                            "Finding your words."
-                                        } else {
-                                            "Ready when you are."
-                                        })
-                                        .size(25.0),
-                                    );
-                                    ui.label(
-                                        egui::RichText::new(if status == AppStatus::Processing {
-                                            "Transcribing on your GPU."
-                                        } else {
-                                            "Hold your shortcut. Release to transcribe."
-                                        })
-                                        .size(13.0)
-                                        .color(theme::MUTED),
-                                    );
-                                });
-                            },
-                        );
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(160.0, 58.0),
-                            egui::Layout::top_down(egui::Align::Center),
-                            |ui| {
-                                ui.set_min_size(egui::vec2(160.0, 58.0));
-                                ui.spacing_mut().item_spacing.y = 4.0;
-                                if status == AppStatus::Processing {
-                                    ui.add_space(8.0);
-                                    theme::spinner(ui);
-                                    ui.label(theme::eyebrow("PROCESSING"));
-                                } else {
-                                    keycap(ui, &hotkey_display);
-                                    ui.label(theme::eyebrow("HOLD TO RECORD"));
-                                }
-                            },
-                        );
-                    });
-                });
-            ui.add_space(4.0);
-
-            let transcript_height = (ui.available_height() - 244.0).clamp(60.0, 240.0);
-            theme::card().inner_margin(12).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    ui.label(theme::eyebrow("LATEST TRANSCRIPT"));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let copy_id = ui.id().with("copied_at");
-                        let now = ui.input(|i| i.time);
-                        let copied = ui
-                            .data(|data| data.get_temp::<f64>(copy_id))
-                            .is_some_and(|at| now - at < 2.0);
-                        if ui
-                            .add_enabled(
-                                !last_result.is_empty(),
-                                egui::Button::new(if copied { "Copied" } else { "Copy text" }),
-                            )
-                            .clicked()
-                        {
-                            ui.ctx().copy_text(last_result.to_owned());
-                            ui.data_mut(|data| data.insert_temp(copy_id, now));
-                            ui.ctx().request_repaint_after(Duration::from_secs(2));
-                        }
-                        if !last_result.is_empty() {
-                            ui.label(
-                                egui::RichText::new(format!(
-                                    "{:.2} s",
-                                    last_inference_ms as f64 / 1000.0
-                                ))
-                                .size(12.0)
-                                .color(theme::DIM),
-                            );
-                        }
-                    });
-                });
-                ui.add_space(6.0);
-                egui::ScrollArea::vertical()
-                    .id_salt("transcript_scroll")
-                    .min_scrolled_height(transcript_height)
-                    .max_height(transcript_height)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        if last_result.is_empty() {
-                            ui.add_space(10.0);
-                            ui.label(
-                                theme::heading("A little less typing.")
-                                    .size(18.0)
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width(), PANEL_HEIGHT),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.set_min_size(egui::vec2(ui.available_width(), PANEL_HEIGHT));
+                            if processing {
+                                theme::spinner(ui, 22.0);
+                            } else {
+                                microphone(ui, 22.0, theme::ACCENT);
+                            }
+                            ui.add_space(4.0);
+                            ui.vertical(|ui| {
+                                ui.spacing_mut().item_spacing.y = 1.0;
+                                ui.label(theme::title(
+                                    if processing { "Transcribing…" } else { "Push to talk" },
+                                    15.0,
+                                ));
+                                ui.label(
+                                    egui::RichText::new(if processing {
+                                        format!("{} on the local GPU", variant.display_name())
+                                    } else {
+                                        "Hold the shortcut to record. Release to transcribe.".into()
+                                    })
+                                    .size(12.5)
                                     .color(theme::MUTED),
+                                );
+                            });
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| keys(ui, &hotkey_display, !processing),
                             );
-                            ui.label(
-                                egui::RichText::new("Your next transcript will appear here.")
-                                    .size(13.0)
-                                    .color(theme::DIM),
+                        },
+                    );
+                });
+            ui.add_space(8.0);
+
+            theme::card()
+                .inner_margin(egui::Margin::symmetric(14, 10))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width(), 24.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.label(theme::section("Last transcript"));
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    let copy_id = ui.id().with("copied_at");
+                                    let now = ui.input(|i| i.time);
+                                    let copied = ui
+                                        .data(|data| data.get_temp::<f64>(copy_id))
+                                        .is_some_and(|at| now - at < 2.0);
+                                    if ui
+                                        .add_enabled(
+                                            !last_result.is_empty(),
+                                            egui::Button::new(if copied { "Copied" } else { "Copy" })
+                                                .min_size(egui::vec2(0.0, 24.0)),
+                                        )
+                                        .clicked()
+                                    {
+                                        ui.ctx().copy_text(last_result.to_owned());
+                                        ui.data_mut(|data| data.insert_temp(copy_id, now));
+                                        ui.ctx().request_repaint_after(Duration::from_secs(2));
+                                    }
+                                    if !last_result.is_empty() {
+                                        ui.label(
+                                            theme::meta(format!(
+                                                "{:.2} s",
+                                                last_inference_ms as f64 / 1000.0
+                                            )),
+                                        );
+                                    }
+                                },
                             );
-                        } else {
-                            ui.add(
-                                egui::Label::new(
-                                    egui::RichText::new(last_result)
-                                        .size(16.0)
-                                        .color(theme::TEXT),
-                                )
-                                .wrap()
-                                .selectable(true),
-                            );
-                        }
+                        },
+                    );
+                    ui.add_space(4.0);
+                    ui.scope(|ui| {
+                        // A quiet scrollbar on the card surface.
+                        ui.visuals_mut().extreme_bg_color = theme::SURFACE;
+                        ui.visuals_mut().widgets.inactive.fg_stroke.color = theme::BORDER_STRONG;
+                        egui::ScrollArea::vertical()
+                            .id_salt("transcript_scroll")
+                            .min_scrolled_height(transcript_height)
+                            .max_height(transcript_height)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                if last_result.is_empty() {
+                                    ui.add_space(4.0);
+                                    ui.label(egui::RichText::new("No transcript yet").color(theme::MUTED));
+                                    ui.label(
+                                        theme::meta(format!(
+                                            "Hold {hotkey_display} and speak. The text appears here."
+                                        ))
+                                        .size(12.5),
+                                    );
+                                } else {
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(last_result)
+                                                .size(14.0)
+                                                .line_height(Some(20.0))
+                                                .color(theme::TEXT),
+                                        )
+                                        .wrap()
+                                        .selectable(true),
+                                    );
+                                }
+                            });
                     });
-                ui.add_space(8.0);
-                ui.label(
-                    egui::RichText::new(variant.display_name())
-                        .size(12.0)
-                        .color(theme::DIM),
-                );
-            });
+                    ui.add_space(6.0);
+                    ui.label(theme::meta(variant.display_name()));
+                });
             // Keep compact controls close; balance the footer gap on taller windows.
-            ui.add_space((ui.ctx().screen_rect().height() - 580.0).clamp(4.0, 18.0));
+            ui.add_space((ui.ctx().screen_rect().height() - 580.0).clamp(4.0, 16.0));
 
             ui.separator();
-            ui.add_space(2.0);
+            ui.add_space(4.0);
             ui.columns(2, |columns| {
                 let ui = &mut columns[0];
-                ui.label(theme::eyebrow("SHORTCUT"));
+                ui.label(theme::section("Shortcut"));
                 ui.allocate_ui_with_layout(
-                    egui::vec2(ui.available_width(), 34.0),
+                    egui::vec2(ui.available_width(), 28.0),
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
-                        ui.set_min_height(34.0);
+                        ui.set_min_height(28.0);
                         if hotkey_capture.listening {
                             if let Some((mods, key)) = hotkey_capture.poll() {
                                 config.hotkey.modifiers = mods;
@@ -201,7 +193,6 @@ pub fn draw_ready(
                             }
                             ui.label(
                                 egui::RichText::new(hotkey_capture.current_display())
-                                    .size(13.0)
                                     .color(theme::ACCENT),
                             );
                             if theme::secondary_button(ui, "Cancel").clicked() {
@@ -209,7 +200,8 @@ pub fn draw_ready(
                             }
                             ui.ctx().request_repaint();
                         } else {
-                            keycap(ui, &hotkey_display);
+                            keys(ui, &hotkey_display, true);
+                            ui.add_space(4.0);
                             if theme::secondary_button(ui, "Change").clicked() {
                                 hotkey_capture.start();
                             }
@@ -218,12 +210,12 @@ pub fn draw_ready(
                 );
 
                 let ui = &mut columns[1];
-                ui.label(theme::eyebrow("SPOKEN LANGUAGE"));
+                ui.label(theme::section("Spoken language"));
                 ui.allocate_ui_with_layout(
-                    egui::vec2(ui.available_width(), 34.0),
+                    egui::vec2(ui.available_width(), 28.0),
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
-                        ui.set_min_height(34.0);
+                        ui.set_min_height(28.0);
                         let current_name = ALL_LANGUAGES
                             .iter()
                             .find(|l| l.code.unwrap_or("auto") == config.language)
@@ -239,17 +231,17 @@ pub fn draw_ready(
                         egui::ComboBox::from_id_salt("lang_selector")
                             .selected_text(current_name)
                             .width(ui.available_width())
-                            .height(200.0)
+                            .height(220.0)
                             .icon(|ui, rect, visuals, is_open, _| {
                                 let c = rect.center();
-                                let y = if is_open { -3.0 } else { 3.0 };
+                                let y = if is_open { -2.5 } else { 2.5 };
                                 ui.painter().add(egui::Shape::line(
                                     vec![
-                                        c + egui::vec2(-4.0, -y / 2.0),
+                                        c + egui::vec2(-3.5, -y / 2.0),
                                         c + egui::vec2(0.0, y / 2.0),
-                                        c + egui::vec2(4.0, -y / 2.0),
+                                        c + egui::vec2(3.5, -y / 2.0),
                                     ],
-                                    visuals.fg_stroke,
+                                    egui::Stroke::new(1.5_f32, visuals.fg_stroke.color),
                                 ));
                             })
                             .show_ui(ui, |ui| {
@@ -274,6 +266,7 @@ pub fn draw_ready(
                     },
                 );
             });
+            ui.add_space(2.0);
             ui.columns(2, |columns| {
                 if columns[0]
                     .checkbox(&mut config.auto_paste, "Auto-paste text")
@@ -292,6 +285,11 @@ pub fn draw_ready(
                     action = MainAction::ConfigChanged;
                 }
             });
+            let measured = ui.min_rect().height() - transcript_height;
+            if (measured - fixed_height).abs() > 0.5 {
+                ui.data_mut(|data| data.insert_temp(fixed_id, measured));
+                ui.ctx().request_discard("fit transcript height");
+            }
         });
     action
 }
@@ -303,68 +301,89 @@ pub fn draw_recording(
     elapsed: Duration,
     hotkey_display: &str,
 ) {
-    ui.horizontal(|ui| {
-        theme::brand(ui);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            status_indicator::draw_status(ui, AppStatus::Recording);
-        });
+    theme::top_bar(ui, |ui| {
+        status_indicator::draw_status(ui, AppStatus::Recording);
     });
-    ui.add_space(12.0);
+    ui.add_space(10.0);
     egui::ScrollArea::vertical()
         .id_salt("recording_body")
         .min_scrolled_height(0.0)
         .auto_shrink([false, false])
         .show(ui, |ui| {
+            let card_height = ui.available_height();
             theme::card().show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.vertical_centered(|ui| {
-                    ui.add_space(if ui.ctx().screen_rect().height() < 600.0 {
-                        4.0
-                    } else {
-                        16.0
-                    });
-                    microphone(ui, 48.0, theme::ACCENT);
-                    ui.add_space(12.0);
-                    ui.label(theme::eyebrow("LISTENING TO YOU"));
+                ui.set_min_height(card_height - 30.0);
+                // Centre the content using the height measured on the previous pass.
+                let height_id = ui.id().with("recording_content_height");
+                let content_height: f32 = ui.data(|data| data.get_temp(height_id)).unwrap_or(0.0);
+                ui.add_space(((card_height - 30.0 - content_height) / 2.0).max(0.0));
+                let content = ui.vertical_centered(|ui| {
                     ui.label(
-                        theme::heading(format!(
+                        egui::RichText::new(format!(
                             "{:02}:{:02}",
                             elapsed.as_secs() / 60,
                             elapsed.as_secs() % 60
                         ))
-                        .size(44.0),
+                        .font(egui::FontId::new(
+                            28.0,
+                            egui::FontFamily::Name("heading".into()),
+                        ))
+                        .color(theme::TEXT),
                     );
-                    ui.add_space(12.0);
-                    waveform::draw_waveform(ui, samples, sample_rate);
-                    ui.add_space(16.0);
-                    ui.label(theme::heading("Let your thoughts flow.").size(22.0));
+                    ui.add_space(10.0);
+                    let wave_height = (card_height - 230.0).clamp(44.0, 72.0);
+                    waveform::draw_waveform(ui, samples, sample_rate, wave_height);
+                    ui.add_space(10.0);
                     ui.label(
                         egui::RichText::new(format!("Release {hotkey_display} to transcribe."))
-                            .size(14.0)
                             .color(theme::MUTED),
                     );
-                    ui.add_space(12.0);
                 });
+                let measured = content.response.rect.height();
+                if (measured - content_height).abs() > 0.5 {
+                    ui.data_mut(|data| data.insert_temp(height_id, measured));
+                    ui.ctx().request_discard("center recording content");
+                }
             });
         });
 }
 
-fn keycap(ui: &mut egui::Ui, shortcut: &str) {
-    egui::Frame::new()
-        .fill(theme::BG)
-        .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
-        .corner_radius(6)
-        .inner_margin(egui::Margin::symmetric(10, 5))
-        .show(ui, |ui| {
-            ui.label(egui::RichText::new(shortcut).size(13.0).color(theme::TEXT));
-        });
+/// Shortcut as individual key caps, in reading order for either layout direction.
+fn keys(ui: &mut egui::Ui, shortcut: &str, enabled: bool) {
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let mut parts: Vec<&str> = shortcut.split(" + ").collect();
+        if ui.layout().prefer_right_to_left() {
+            parts.reverse();
+        }
+        let color = if enabled { theme::TEXT } else { theme::DIM };
+        for part in parts {
+            let galley = ui.painter().layout_no_wrap(
+                part.to_owned(),
+                egui::FontId::proportional(12.0),
+                color,
+            );
+            let size = egui::vec2((galley.size().x + 14.0).max(24.0), 22.0);
+            let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+            ui.painter().rect(
+                rect,
+                theme::CONTROL_RADIUS,
+                theme::BG,
+                egui::Stroke::new(1.0_f32, theme::BORDER_STRONG),
+                egui::StrokeKind::Inside,
+            );
+            ui.painter()
+                .galley(rect.center() - galley.size() / 2.0, galley, color);
+        }
+    });
 }
 
 fn microphone(ui: &mut egui::Ui, size: f32, color: egui::Color32) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
     let c = rect.center();
     let painter = ui.painter();
-    let stroke = egui::Stroke::new(1.8_f32, color);
+    let stroke = egui::Stroke::new(1.5_f32, color);
     painter.rect_stroke(
         egui::Rect::from_center_size(
             c - egui::vec2(0.0, size * 0.1),
@@ -426,7 +445,7 @@ mod tests {
                     config.hotkey.modifiers = vec!["CONTROL".into(), "SUPER".into()];
                     config.hotkey.key.clear();
                     let mut capture = HotkeyCapture::new();
-                    // Let egui settle the scroll areas and font layout at native DPI.
+                    // Let egui settle the scroll areas, measured heights and font layout.
                     for _ in 0..3 {
                         let output = ctx.run(
                             egui::RawInput {
@@ -436,7 +455,7 @@ mod tests {
                             |ctx| {
                                 theme::footer(ctx);
                                 egui::CentralPanel::default()
-                                    .frame(egui::Frame::new().fill(theme::BG).inner_margin(24))
+                                    .frame(egui::Frame::new().fill(theme::BG).inner_margin(20))
                                     .show(ctx, |ui| {
                                         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                                             if status == AppStatus::Recording {
@@ -458,46 +477,43 @@ mod tests {
                             }).unwrap_or_else(|| panic!("Missing {label} at {size:?}, {scale}, {status:?}"))
                         };
                         let labels: &[&str] = if status == AppStatus::Recording {
-                            &["Whisper Burn", "Recording", "Let your thoughts flow.",
-                                "Release Ctrl + Win to transcribe."]
+                            &["Whisper Burn", "Recording", "00:08", "Release Ctrl + Win to transcribe."]
                         } else {
-                            &["Whisper Burn", "Models", "SHORTCUT", "SPOKEN LANGUAGE", "Change",
-                                "Auto-paste text", "Mute while recording", "Whisper Large V3"]
+                            &["Whisper Burn", "Models", "Ctrl", "Win", "Shortcut", "Spoken language",
+                                "Change", "Auto-paste text", "Mute while recording", "Whisper Large V3"]
                         };
                         for label in labels {
                             let (clip, bounds) = label_bounds(label);
                             assert!(clip.expand(0.5).contains_rect(bounds),
                                 "Clipped {label} at {size:?}, {scale}, {status:?}: {bounds:?} outside {clip:?}");
                         }
-                        if matches!(status, AppStatus::Ready | AppStatus::Done) {
-                            let chord = label_bounds("Ctrl + Win").1;
-                            let caption = label_bounds("HOLD TO RECORD").1;
-                            assert!((chord.center().x - caption.center().x).abs() <= 2.0,
-                                "Shortcut not centered: {:?} vs {:?}", chord.center(), caption.center());
-                        }
+                        let mut cards = Vec::new();
                         for clipped in &output.shapes {
                             if let egui::Shape::Rect(rect) = &clipped.shape {
-                                if rect.fill == theme::BG && rect.stroke.color == theme::BORDER {
-                                    assert!(rect.rect.height() <= 40.0, "Stretched keycap: {:?}", rect.rect);
+                                if rect.fill == theme::BG && rect.stroke.color == theme::BORDER_STRONG {
+                                    assert!(rect.rect.height() <= 24.0, "Stretched key cap: {:?}", rect.rect);
                                 }
                                 if rect.fill == theme::SURFACE && rect.rect.width() > 400.0 {
                                     assert!(clipped.clip_rect.expand(0.5).contains_rect(rect.rect),
                                         "Card clipped at {size:?}, {scale}, {status:?}: {:?}", rect.rect);
-                                    if status != AppStatus::Recording {
-                                        if let Some(y) = transcript_top {
-                                            assert!((rect.rect.top() - y).abs() < 1.0, "Hero height shifts with state");
-                                        }
-                                        transcript_top = Some(rect.rect.top());
-                                    }
+                                    cards.push(rect.rect);
                                 }
                                 // A scrollbar can have an inverted, unpainted rect on its first frame.
                                 let body_scrollbar = rect.rect.is_positive()
-                                    && rect.fill == theme::MUTED
-                                    && rect.rect.width() <= 6.1
-                                    && rect.rect.left() > size[0] - 34.0
+                                    && rect.fill == theme::TEXT
+                                    && rect.rect.width() <= 4.1
+                                    && rect.rect.left() > size[0] - 30.0
                                     && rect.rect.height() > 20.0;
                                 assert!(!body_scrollbar, "Unneeded body scrollbar at {size:?}, {scale}, {status:?}: {:?}", rect.rect);
                             }
+                        }
+                        if status != AppStatus::Recording {
+                            // The status panel keeps one height, so the transcript never jumps.
+                            let top = cards.get(1).expect("transcript card").top();
+                            if let Some(y) = transcript_top {
+                                assert!((top - y).abs() < 1.0, "Status panel height shifts with state");
+                            }
+                            transcript_top = Some(top);
                         }
                     }
                 }
