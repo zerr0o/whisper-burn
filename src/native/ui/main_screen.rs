@@ -5,7 +5,7 @@ use super::{
     status_indicator::{self, AppStatus},
     theme, waveform,
 };
-use crate::native::config::AppConfig;
+use crate::native::config::{AppConfig, HotkeyConfig};
 use crate::native::download::ModelVariant;
 use crate::native::hotkey::{self, HotkeyCapture};
 use crate::ALL_LANGUAGES;
@@ -182,7 +182,8 @@ pub fn draw_ready(
                 ui.label(theme::section("Shortcut"));
                 ui.allocate_ui_with_layout(
                     egui::vec2(ui.available_width(), 28.0),
-                    egui::Layout::left_to_right(egui::Align::Center),
+                    // Long shortcuts wrap the buttons onto a second line.
+                    egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true),
                     |ui| {
                         ui.set_min_height(28.0);
                         if hotkey_capture.listening {
@@ -204,6 +205,17 @@ pub fn draw_ready(
                             ui.add_space(4.0);
                             if theme::secondary_button(ui, "Change").clicked() {
                                 hotkey_capture.start();
+                            }
+                            if config.hotkey != HotkeyConfig::default()
+                                && theme::quiet_button(ui, "Reset")
+                                    .on_hover_text(format!(
+                                        "Restore the default shortcut ({})",
+                                        hotkey::HotkeyState::display_string(&AppConfig::default())
+                                    ))
+                                    .clicked()
+                            {
+                                config.hotkey = HotkeyConfig::default();
+                                action = MainAction::HotkeyChanged;
                             }
                         }
                     },
@@ -516,6 +528,77 @@ mod tests {
                             transcript_top = Some(top);
                         }
                     }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn reset_appears_only_for_a_custom_shortcut_and_stays_in_its_column() {
+        let render = |size: [f32; 2], scale: f32, config: &mut AppConfig| {
+            let ctx = egui::Context::default();
+            ctx.set_pixels_per_point(scale);
+            theme::apply_dark_theme(&ctx);
+            let mut capture = HotkeyCapture::new();
+            let mut shapes = Vec::new();
+            for _ in 0..3 {
+                let input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size.into())),
+                    ..Default::default()
+                };
+                shapes = ctx
+                    .run(input, |ctx| {
+                        theme::footer(ctx);
+                        egui::CentralPanel::default()
+                            .frame(egui::Frame::new().inner_margin(20))
+                            .show(ctx, |ui| {
+                                draw_ready(
+                                    ui,
+                                    "",
+                                    0,
+                                    ModelVariant::LargeV3,
+                                    config,
+                                    AppStatus::Ready,
+                                    &mut capture,
+                                );
+                            });
+                    })
+                    .shapes;
+            }
+            shapes
+        };
+        let text_bounds = |shapes: &[egui::epaint::ClippedShape], label: &str| {
+            shapes.iter().find_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) if text.galley.text() == label => {
+                    Some(text.visual_bounding_rect())
+                }
+                _ => None,
+            })
+        };
+        for size in [[780.0, 640.0], [620.0, 540.0]] {
+            for scale in [1.0, 1.25] {
+                let shapes = render(size, scale, &mut AppConfig::default());
+                assert!(
+                    text_bounds(&shapes, "Reset").is_none(),
+                    "Reset shown for the default shortcut"
+                );
+
+                let mut config = AppConfig::default();
+                config.hotkey.modifiers = ["CONTROL", "ALT", "SHIFT", "SUPER"]
+                    .map(String::from)
+                    .into();
+                config.hotkey.key = "PAGEDOWN".into();
+                let shapes = render(size, scale, &mut config);
+                let column = text_bounds(&shapes, "Spoken language")
+                    .expect("language label")
+                    .left();
+                for label in ["Change", "Reset"] {
+                    let bounds = text_bounds(&shapes, label)
+                        .unwrap_or_else(|| panic!("Missing {label} at {size:?}, {scale}"));
+                    assert!(
+                        bounds.right() < column,
+                        "{label} overlaps the language column at {size:?}, {scale}: {bounds:?}"
+                    );
                 }
             }
         }

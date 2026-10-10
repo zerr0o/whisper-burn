@@ -74,14 +74,14 @@ cargo build --release --no-default-features --features wgpu
 ## Usage
 
 1. Launch the app — it will prompt you to download a model on first run
-2. Press and hold **F2** (or your configured hotkey) to start recording
-3. Release **F2** — the audio is transcribed and the text appears in the app
+2. Press and hold **Ctrl + Win** (or your configured hotkey) to start recording
+3. Release the keys — the audio is transcribed and the text appears in the app
 4. With **auto-paste** enabled, the text is automatically pasted into the active window
 
 ### Settings
 
 All settings are accessible directly on the main screen:
-- **Hotkey** — Click "Change" and press your desired key combo. Supports any combination of Ctrl/Alt/Shift/Win + trigger key (F1-F12, Space, etc.), or modifier-only combos (e.g. Ctrl+Win).
+- **Hotkey** — Click "Change" and press your desired key combo. Supports any combination of Ctrl/Alt/Shift/Win + trigger key (F1-F12, Space, etc.), or modifier-only combos (e.g. Ctrl+Win). Push-to-talk is paused while you record a new shortcut. "Reset" restores the default, Ctrl + Win.
 - **Language** — Auto-detect or force a specific language
 - **Auto-paste** — Automatically paste transcription into the active app
 - **Auto-mute** — Mute system audio during recording
@@ -170,7 +170,7 @@ cargo run --example ui-preview -- ready
 This native gallery renders the actual UI with sample text and in-memory settings.
 It never opens the microphone, starts inference, downloads files, or saves settings.
 Other views: `empty`, `models`, `recording`, `processing`, `choose`, `confirm`,
-`download`, and `loading`. Model availability still reflects files next to the
+`download`, `loading`, and `custom` (a long non-default shortcut). Model availability still reflects files next to the
 preview executable. In the preview only, F1–F9 switch views in the order above
 (`ready` first); F10 uses 640×580, F11 uses 620×540, and F12 restores 780×640.
 These preview shortcuts are paused while capturing a new dictation shortcut.

@@ -85,6 +85,14 @@ fn is_combo_pressed(_config: &AppConfig) -> bool {
 
 // --- Hotkey capture ---
 
+/// Modifier names in display order, with their left and right virtual key codes.
+const MODIFIERS: [(&str, [i32; 2]); 4] = [
+    ("CONTROL", [0xA2, 0xA3]),
+    ("ALT", [0xA4, 0xA5]),
+    ("SHIFT", [0xA0, 0xA1]),
+    ("SUPER", [0x5B, 0x5C]),
+];
+
 /// Virtual key codes for trigger keys (non-modifier)
 #[cfg(windows)]
 const TRIGGER_KEYS: &[(i32, &str)] = &[
@@ -96,32 +104,35 @@ const TRIGGER_KEYS: &[(i32, &str)] = &[
     (0x21, "PAGEUP"), (0x22, "PAGEDOWN"),
 ];
 
+/// Records a new shortcut. Every key pressed counts until all keys are released.
 pub struct HotkeyCapture {
     pub listening: bool,
-    accumulated_modifiers: Vec<String>,
-    accumulated_key: Option<String>,
-    any_pressed_this_session: bool,
-    waiting_for_clean_start: bool,
+    /// Modifiers pressed during this capture, in `MODIFIERS` order.
+    modifiers: [bool; 4],
+    key: Option<&'static str>,
+    pressed: bool,
+    /// Keys still held when the capture started are ignored until released.
+    waiting_for_release: bool,
 }
 
 impl HotkeyCapture {
     pub fn new() -> Self {
         Self {
             listening: false,
-            accumulated_modifiers: Vec::new(),
-            accumulated_key: None,
-            any_pressed_this_session: false,
-            waiting_for_clean_start: false,
+            modifiers: [false; 4],
+            key: None,
+            pressed: false,
+            waiting_for_release: false,
         }
     }
 
     /// Start listening. Waits for all keys to be released first (clean start).
     pub fn start(&mut self) {
-        self.listening = true;
-        self.accumulated_modifiers.clear();
-        self.accumulated_key = None;
-        self.any_pressed_this_session = false;
-        self.waiting_for_clean_start = true;
+        *self = Self {
+            listening: true,
+            waiting_for_release: true,
+            ..Self::new()
+        };
     }
 
     /// Poll key states during capture. Returns Some((modifiers, key)) when
@@ -136,60 +147,14 @@ impl HotkeyCapture {
         {
             use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 
-            let mut any_currently_pressed = false;
-
-            unsafe {
-                // Check and accumulate modifiers
-                let mod_checks: &[(&str, &[i32])] = &[
-                    ("CONTROL", &[0xA2, 0xA3]),
-                    ("ALT", &[0xA4, 0xA5]),
-                    ("SHIFT", &[0xA0, 0xA1]),
-                    ("SUPER", &[0x5B, 0x5C]),
-                ];
-
-                for &(name, vks) in mod_checks {
-                    if vks.iter().any(|&vk| GetAsyncKeyState(vk) < 0) {
-                        any_currently_pressed = true;
-                        if !self.accumulated_modifiers.iter().any(|m| m == name) {
-                            self.accumulated_modifiers.push(name.to_string());
-                        }
-                    }
-                }
-
-                // Check and accumulate trigger key (keep last one seen)
-                for &(vk, name) in TRIGGER_KEYS {
-                    if GetAsyncKeyState(vk) < 0 {
-                        any_currently_pressed = true;
-                        self.accumulated_key = Some(name.to_string());
-                        break;
-                    }
-                }
-            }
-
-            // Wait for clean start (all keys released after clicking "Change")
-            if self.waiting_for_clean_start {
-                if !any_currently_pressed {
-                    self.waiting_for_clean_start = false;
-                }
-                return None;
-            }
-
-            if any_currently_pressed {
-                self.any_pressed_this_session = true;
-            } else if self.any_pressed_this_session {
-                // All keys released — capture complete
-                self.any_pressed_this_session = false;
-                self.listening = false;
-
-                let mods = std::mem::take(&mut self.accumulated_modifiers);
-                let key = self.accumulated_key.take().unwrap_or_default();
-
-                if !mods.is_empty() || !key.is_empty() {
-                    return Some((mods, key));
-                }
-            }
-
-            None
+            // SAFETY: GetAsyncKeyState only reads the global keyboard state.
+            let down = |vk: i32| unsafe { GetAsyncKeyState(vk) < 0 };
+            let modifiers = MODIFIERS.map(|(_, vks)| vks.into_iter().any(down));
+            let key = TRIGGER_KEYS
+                .iter()
+                .find(|&&(vk, _)| down(vk))
+                .map(|&(_, name)| name);
+            self.update(modifiers, key)
         }
 
         #[cfg(not(windows))]
@@ -198,18 +163,54 @@ impl HotkeyCapture {
         }
     }
 
+    /// Advances the capture with the keys held right now.
+    fn update(
+        &mut self,
+        modifiers: [bool; 4],
+        key: Option<&'static str>,
+    ) -> Option<(Vec<String>, String)> {
+        let any_held = modifiers.contains(&true) || key.is_some();
+        if self.waiting_for_release {
+            self.waiting_for_release = any_held;
+            return None;
+        }
+        if any_held {
+            self.pressed = true;
+            for (seen, held) in self.modifiers.iter_mut().zip(modifiers) {
+                *seen |= held;
+            }
+            self.key = key.or(self.key);
+            return None;
+        }
+        if !self.pressed {
+            return None;
+        }
+        // Every key is released: the combination is complete.
+        let combo: (Vec<String>, String) = (
+            self.modifier_names().map(String::from).collect(),
+            self.key.unwrap_or_default().to_string(),
+        );
+        *self = Self::new();
+        Some(combo)
+    }
+
+    fn modifier_names(&self) -> impl Iterator<Item = &'static str> {
+        MODIFIERS
+            .iter()
+            .zip(self.modifiers)
+            .filter(|&(_, seen)| seen)
+            .map(|((name, _), _)| *name)
+    }
+
     /// Display what's being pressed during capture
     pub fn current_display(&self) -> String {
-        let mut parts: Vec<String> = self
-            .accumulated_modifiers
-            .iter()
-            .map(|m| modifier_display(m))
+        let parts: Vec<String> = self
+            .modifier_names()
+            .map(modifier_display)
+            .chain(self.key.map(key_display))
             .collect();
-        if let Some(ref k) = self.accumulated_key {
-            parts.push(key_display(k));
-        }
         if parts.is_empty() {
-            "Press your hotkey...".to_string()
+            "Press the new shortcut…".to_string()
         } else {
             parts.join(" + ")
         }
@@ -266,5 +267,54 @@ fn key_to_vk(key: &str) -> i32 {
         "HOME" => 0x24,   "END" => 0x23,
         "PAGEUP" => 0x21,  "PAGEDOWN" => 0x22,
         _ => 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const NONE: [bool; 4] = [false; 4];
+    const CTRL: [bool; 4] = [true, false, false, false];
+    const WIN: [bool; 4] = [false, false, false, true];
+    const CTRL_WIN: [bool; 4] = [true, false, false, true];
+
+    fn started() -> HotkeyCapture {
+        let mut capture = HotkeyCapture::new();
+        capture.start();
+        capture
+    }
+
+    #[test]
+    fn modifier_only_shortcut_keeps_both_keys_in_any_order() {
+        for (first, last) in [(CTRL, WIN), (WIN, CTRL)] {
+            let mut capture = started();
+            for held in [NONE, first, CTRL_WIN, last] {
+                assert_eq!(capture.update(held, None), None);
+            }
+            assert_eq!(capture.current_display(), "Ctrl + Win");
+            assert_eq!(
+                capture.update(NONE, None),
+                Some((vec!["CONTROL".into(), "SUPER".into()], String::new()))
+            );
+            assert!(!capture.listening);
+        }
+    }
+
+    #[test]
+    fn keys_held_when_capture_starts_are_ignored() {
+        let mut capture = started();
+        assert_eq!(capture.update(CTRL, None), None);
+        assert_eq!(capture.update(NONE, None), None);
+        assert_eq!(capture.update(NONE, Some("F9")), None);
+        assert_eq!(capture.update(NONE, None), Some((Vec::new(), "F9".into())));
+    }
+
+    #[test]
+    fn default_shortcut_is_ctrl_win() {
+        assert_eq!(
+            HotkeyState::display_string(&AppConfig::default()),
+            "Ctrl + Win"
+        );
     }
 }

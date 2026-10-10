@@ -1,17 +1,18 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HotkeyConfig {
     pub key: String,
     pub modifiers: Vec<String>,
 }
 
 impl Default for HotkeyConfig {
+    /// Ctrl + Win: a modifier-only chord that no Windows shortcut uses on its own.
     fn default() -> Self {
         Self {
-            key: "F2".into(),
-            modifiers: vec![],
+            key: String::new(),
+            modifiers: vec!["CONTROL".into(), "SUPER".into()],
         }
     }
 }

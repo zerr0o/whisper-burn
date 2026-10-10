@@ -60,7 +60,8 @@ Behavior summary:
 - On startup, the app looks for model files next to the executable in `models/`.
 - If needed, it downloads `tokenizer.json` plus the selected GGUF model from Hugging Face.
 - The model is loaded on a background thread, then wrapped in a dedicated inference worker thread.
-- Push-to-talk is handled by polling the configured hotkey with `GetAsyncKeyState`.
+- Push-to-talk is handled by polling the configured hotkey with `GetAsyncKeyState`. It is paused while a new shortcut is being captured; otherwise pressing the current shortcut during capture starts a dictation and truncates the new combination.
+- The default shortcut is Ctrl + Win (`HotkeyConfig::default()`); the "Reset" button restores it.
 - Holding the hotkey starts microphone capture; releasing it stops capture and submits the audio to the inference thread.
 - The last transcription is shown in the UI and can optionally be auto-pasted into the foreground app.
 

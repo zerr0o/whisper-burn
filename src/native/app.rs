@@ -225,10 +225,11 @@ impl eframe::App for NativeApp {
             });
         }
 
-        // Poll push-to-talk hotkey (GetAsyncKeyState)
+        // Poll push-to-talk hotkey (GetAsyncKeyState). Keys pressed while a new
+        // shortcut is being recorded must not start a dictation.
         match self.hotkey_state.poll(&self.config) {
             HotkeyEvent::Pressed => {
-                if matches!(self.screen, AppScreen::Ready) {
+                if matches!(self.screen, AppScreen::Ready) && !self.hotkey_capture.listening {
                     self.start_recording();
                 }
             }

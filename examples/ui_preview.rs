@@ -1,5 +1,5 @@
 //! Native presentation fixtures. No model, microphone, downloads, or saved settings.
-//! cargo run --example ui-preview -- [ready|empty|models|recording|processing|choose|confirm|download|loading]
+//! cargo run --example ui-preview -- [ready|empty|models|recording|processing|choose|confirm|download|loading|custom]
 //! cargo run --example ui-preview -- --snapshot <dir>   (offscreen PPM renders, no window)
 use eframe::egui;
 use std::{collections::HashMap, sync::atomic::Ordering, time::Duration};
@@ -37,8 +37,13 @@ impl Preview {
     fn new(screen: &str) -> Self {
         let mut config = AppConfig::default();
         config.language = "fr".into();
-        config.hotkey.modifiers = vec!["CONTROL".into(), "SUPER".into()];
-        config.hotkey.key = String::new();
+        if screen == "custom" {
+            // The longest possible custom shortcut, to check the Reset action fits.
+            config.hotkey.modifiers = ["CONTROL", "ALT", "SHIFT", "SUPER"]
+                .map(String::from)
+                .into();
+            config.hotkey.key = "PAGEDOWN".into();
+        }
         config.auto_paste = true;
         config.auto_mute = true;
         let progress = DownloadProgress::default();
@@ -380,6 +385,14 @@ fn snapshot(dir: &std::path::Path) -> std::io::Result<()> {
                 None,
             ));
         }
+    }
+    for size in [[780.0, 640.0], [620.0, 540.0]] {
+        jobs.push((
+            format!("custom-shortcut-{}x{}", size[0], size[1]),
+            "custom",
+            size,
+            None,
+        ));
     }
     jobs.push((
         "language-open-780x640".into(),

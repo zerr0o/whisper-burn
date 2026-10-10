@@ -1,6 +1,6 @@
 [package]
 name = "whisper-burn"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2021"
 description = "Whisper Large V3 / V3 Turbo - Native ASR in Rust with Burn + wgpu"
 license = "MIT"
